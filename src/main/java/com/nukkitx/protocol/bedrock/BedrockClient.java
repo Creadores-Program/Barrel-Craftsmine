@@ -123,7 +123,9 @@ public class BedrockClient extends Bedrock {
         try {
             ensureBound();
         } catch (RuntimeException e) {
-            return CompletableFuture.failedFuture(e);
+            CompletableFuture<BedrockClientSession> future = new CompletableFuture<>();
+            future.completeExceptionally(e);
+            return future;
         }
         return this.ping(address, timeout, unit).thenApply(pong -> {
             int port;
