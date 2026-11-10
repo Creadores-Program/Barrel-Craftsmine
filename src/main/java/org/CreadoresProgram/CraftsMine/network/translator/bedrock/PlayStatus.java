@@ -9,14 +9,38 @@ import com.nukkitx.protocol.bedrock.packet.PlayStatusPacket;
  * receiving the client's LoginPacket) into a 0.15.x LoginStatusPacket and
  * forwards it to the upstream client.
  *
- * <p>v113 PlayStatusPacket.Status enum values:</p>
- * <ul>
- *   <li>LOGIN_SUCCESS → tell 0.15.x client login succeeded</li>
- *   <li>LOGIN_FAILED_CLIENT / LOGIN_FAILED_SERVER → tell 0.15.x client login failed</li>
- *   <li>PLAYER_SPAWN → tell 0.15.x client to spawn (mapped to LOGIN_SUCCESS
- *       because 0.15.x uses StartGamePacket to trigger spawn, not PlayStatus)</li>
- *   <li>other → default to LOGIN_SUCCESS to avoid stuck-login</li>
- * </ul>
+ * <p>v113 PlayStatusPacket.Status enum ordinals (written as int by the
+ * v113 serializer) are DIRECTLY compatible with 0.15.x LoginStatusPacket
+ * int constants:</p>
+ *
+ * <pre>
+ *   v113 ordinal  | v113 Status              | 0.15.x LoginStatusPacket
+ *   ------------- | ------------------------ | ---------------------------
+ *   0             | LOGIN_SUCCESS            | LOGIN_SUCCESS (0)
+ *   1             | LOGIN_FAILED_CLIENT_OLD  | LOGIN_FAILED_CLIENT (1)
+ *   2             | LOGIN_FAILED_SERVER_OLD  | LOGIN_FAILED_SERVER (2)
+ *   3             | PLAYER_SPAWN             | PLAYER_SPAWN (3)
+ *   4+            | (various failure modes)  | LOGIN_FAILED_SERVER (2)
+ * </pre>
+ *
+ * <p><b>CRITICAL FIX</b>: The previous implementation mapped PLAYER_SPAWN
+ * to LOGIN_SUCCESS, which broke the 0.15.x spawn sequence. The 0.15.x
+ * client login/spawn flow is:</p>
+ * <ol>
+ *   <li>Client sends LoginPacket → server</li>
+ *   <li>Server sends PlayStatus(LOGIN_SUCCESS=0) → client: "login OK,
+ *       proceed to resource packs"</li>
+ *   <li>Server sends StartGamePacket → client: world initialization</li>
+ *   <li>Server sends PlayStatus(PLAYER_SPAWN=3) → client: "spawn into
+ *       the world now"</li>
+ * </ol>
+ *
+ * <p>If the proxy sends LOGIN_SUCCESS (0) instead of PLAYER_SPAWN (3) in
+ * step 4, the 0.15.x client never receives the spawn signal. It stays
+ * stuck in the "logging in..." state, and when subsequent packets arrive
+ * (SetEntityMotion, SetEntityData, UpdateAttributes, etc.) the client
+ * is not in the correct state to process them — leading to a crash
+ * during terrain construction or entity spawn.</p>
  */
 public class PlayStatus implements BedrockPacketTranslator{
   @Override
@@ -28,11 +52,16 @@ public class PlayStatus implements BedrockPacketTranslator{
         new org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket();
     switch(packet.getStatus()){
       case LOGIN_SUCCESS:
-      case PLAYER_SPAWN:
-        // 0.15.x spawns the player via StartGamePacket, not PlayStatus.
-        // PLAYER_SPAWN here is informational; we ack with LOGIN_SUCCESS so
-        // the 0.15.x client stops showing the "logging in..." screen.
         npk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.LOGIN_SUCCESS;
+        break;
+      case PLAYER_SPAWN:
+        // CRITICAL: forward PLAYER_SPAWN as PLAYER_SPAWN (3), NOT as
+        // LOGIN_SUCCESS (0). The 0.15.x client needs this exact status
+        // to complete the spawn sequence after StartGamePacket. Mapping
+        // it to LOGIN_SUCCESS causes the client to get stuck and crash
+        // when subsequent packets (SetEntityMotion, etc.) arrive while
+        // the client is still in the "logging in" state.
+        npk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.PLAYER_SPAWN;
         break;
       case LOGIN_FAILED_CLIENT_OLD:
         npk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.LOGIN_FAILED_CLIENT;
@@ -41,7 +70,7 @@ public class PlayStatus implements BedrockPacketTranslator{
         npk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.LOGIN_FAILED_SERVER;
         break;
       default:
-        // LOGIN_FAILED_INVALID_TENANT, LOGIN_FAILED_VANILLA_EDU, etc.
+        // LOGIN_FAILED_INVALID_TENANT, LOGIN_FAILED_EDITION_MISMATCH_*, etc.
         // 0.15.x has no equivalent; default to LOGIN_FAILED_SERVER.
         npk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.LOGIN_FAILED_SERVER;
         break;
