@@ -7,11 +7,9 @@ submotd: "CraftsMine Software by Creadores Program"
 maxplayers: 10
 # Message when the proxy is closed
 shutdownMessage: "Proxy Closed"
-# Downstream server (bedrock NukkitPM1E, or multiversion, or versionBedrockServer option version)
+# Downstream server (MCPE 1.1 / protocol v113 only)
 bedrockAddress: "test.example.com"
 bedrockPort: 19132
-# Version for Minecraft Bedrock Server (1.7|1.8|1.9|1.10)
-versionBedrockServer: "1.7"
 
 #Debug log?
 debug: false

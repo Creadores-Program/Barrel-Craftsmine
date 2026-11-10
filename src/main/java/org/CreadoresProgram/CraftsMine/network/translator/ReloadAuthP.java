@@ -1,39 +1,22 @@
 package org.CreadoresProgram.CraftsMine.network.translator;
-import org.cloudburstmc.math.vector.Vector3f;
-import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
-import org.CreadoresProgram.CraftsMine.player.Player;
-import org.CreadoresProgram.CraftsMine.server.Server;
-import org.cloudburstmc.math.vector.Vector2f;
-import org.cloudburstmc.math.vector.Vector3f;
-import org.cloudburstmc.math.vector.Vector3i;
-import org.cloudburstmc.protocol.bedrock.data.*;
+
+/**
+ * STUB - ReloadAuthP previously sent a PlayerAuthInputPacket to the
+ * downstream Bedrock server on every player-input tick. PlayerAuthInputPacket
+ * does NOT exist in NukkitX v113 (it was introduced in protocol 422 /
+ * Bedrock 1.19.30). In v113, the equivalent is MovePlayerPacket which
+ * carries position, rotation and motion. The periodic-sender logic will
+ * be re-implemented against MovePlayerPacket in a follow-up session.
+ *
+ * <p>For now this class is a no-op so the project compiles. Player input
+ * still reaches the server through the MovePlayerC craftsman translator
+ * which converts the upstream 0.15.x MovePlayerPacket to a v113
+ * MovePlayerPacket.</p>
+ */
 public class ReloadAuthP{
-  public ReloadAuthP(Player player){
-    try{
-      if(!(player.getBedrockClientSession().isConnected())){
-        return;
-      }
-        PlayerAuthInputPacket pk = new PlayerAuthInputPacket();
-        pk.setPosition(player.getVector3f());
-        pk.setRotation(Vector3f.from(player.getPitch(), player.getYaw(), player.getYaw()));
-        pk.setMotion(Vector2f.ZERO);
-        pk.setInputMode(InputMode.TOUCH);
-        pk.setPlayMode(ClientPlayMode.SCREEN);
-        pk.setDelta(Vector3f.from(player.getVector3f().getX() - player.getOldPosition().getX(), player.getVector3f().getY() - player.getOldPosition().getY(), player.getVector3f().getZ() - player.getOldPosition().getZ()));
-        pk.setVrGazeDirection(null);
-        pk.setTick(player.getTikPia());
-        if (player.isSneaking()) {
-                    pk.getInputData().add(PlayerAuthInputData.SNEAKING);
-        }
-        if (player.isSprinting()) {
-                    pk.getInputData().add(PlayerAuthInputData.SPRINTING);
-        }
-        if (player.getDiggingStatus() == PlayerActionType.START_BREAK) {
-                    pk.getInputData().add(PlayerAuthInputData.PERFORM_BLOCK_ACTIONS);
-        }
-        player.getBedrockClientSession().sendPacketImmediately(pk);
-      }catch(Exception ex){
-        Server.getInstance().getLogger().error("Error translating a datapacket: ", ex);
-      }
+  public ReloadAuthP(org.CreadoresProgram.CraftsMine.player.Player player){
+    // No-op: PlayerAuthInputPacket was removed when migrating to v113.
+    // Periodic input is now sent via MovePlayerPacket directly from the
+    // MovePlayerC translator on every received 0.15.x MovePlayerPacket.
   }
 }

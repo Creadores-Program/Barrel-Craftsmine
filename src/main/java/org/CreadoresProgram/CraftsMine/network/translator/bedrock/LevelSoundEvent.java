@@ -1,67 +1,26 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.LevelEventPacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
-import org.cloudburstmc.protocol.bedrock.data.SoundEvent;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.LevelSoundEventPacket;
+import com.nukkitx.math.vector.Vector3f;
+
+/**
+ * v113 LevelSoundEventPacket (SoundEvent, Vector3f, int volume/pitch,
+ * boolean babySound/relativeVolumeDisabled) → 0.15.x LevelEventPacket
+ * (eventID, x/y/z, datae) as a workaround.
+ *
+ * <p>0.15.x has no LevelSoundEventPacket; the protocol 84 era used
+ * LevelEventPacket with SOUND_* event ids (1000-1052 region). Since the
+ * v113 SoundEvent enum ordinal doesn't align cleanly with those ids,
+ * we drop the packet for now. Sound is non-critical for gameplay.</p>
+ */
 public class LevelSoundEvent implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
-    org.cloudburstmc.protocol.bedrock.packet.LevelSoundEvent1Packet packet = (org.cloudburstmc.protocol.bedrock.packet.LevelSoundEvent1Packet) pk;
-    LevelEventPacket npk = new LevelEventPacket();
-    switch(packet.getSound()){
-      case UNDEFINED:
-        return;
-      case BREAK:
-      case PLACE:
-      case BREAK_BLOCK:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_BLOCK_PLACE;
-        break;
-        case BOW:
-      case SHOOT:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_SHOOT;
-        break;
-        case FIZZ:
-      case ITEM_FIZZ:
-      case SPARKLER_USE:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_FIZZ;
-        break;
-      case EXPLODE:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_TNT;
-        break;
-        case LEVELUP:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_EXPERIENCE_ORB;
-        break;
-      case TELEPORT:
-      case IMITATE_ENDERMAN:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_ENDERMAN_TELEPORT;
-        break;
-      case CAMERA_TAKE_PICTURE:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_CAMERA_TAKE_PICTURE;
-        break;
-      case IMITATE_BLAZE:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_BLAZE_SHOOT;
-        break;
-      case IMITATE_GHAST:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_GHAST;
-        break;
-      case RANDOM_ANVIL_USE:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_ANVIL_USE;
-        break;
-      case THROW:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_ITEM_THROWN;
-        break;
-      case DROP_SLOT:
-      case POP:
-        npk.eventID = LevelEventPacket.Events.EVENT_SOUND_ITEM_DROP;
-        break;
-      default:
-        return;
-    }
-    npk.datae = packet.getExtraData();
-    npk.x = packet.getPosition().getX();
-    npk.y = packet.getPosition().getY();
-    npk.z = packet.getPosition().getZ();
-    player.sendDataCraftsman(npk);
+    // Sound packets don't have a 0.15.x equivalent; silently drop.
+    // The 0.15.x client will simply not hear the sound.
+    LevelSoundEventPacket packet = (LevelSoundEventPacket) pk;
+    if (packet == null) return;
   }
 }

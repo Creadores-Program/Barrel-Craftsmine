@@ -1,18 +1,22 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.math.vector.Vector3f;
-import org.CreadoresProgram.CraftsMine.network.protocol.RespawnPacket;
-public class Respawn implements BedrockPacketTranslator {
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.RespawnPacket;
+import com.nukkitx.math.vector.Vector3f;
 
-    @Override
-    public void translate(BedrockPacket pk, Player player){
-      org.cloudburstmc.protocol.bedrock.packet.RespawnPacket packet = (org.cloudburstmc.protocol.bedrock.packet.RespawnPacket) pk;
-      RespawnPacket subpacket = new RespawnPacket();
-      subpacket.x = packet.getPosition().getX();
-      subpacket.y = packet.getPosition().getY();
-      subpacket.z = packet.getPosition().getZ();
-      player.sendDataCraftsman(subpacket);
-    }
+/** v113 RespawnPacket (Vector3f position) → 0.15.x RespawnPacket (float x,y,z). */
+public class Respawn implements BedrockPacketTranslator{
+  @Override
+  public void translate(BedrockPacket pk, Player player){
+    RespawnPacket packet = (RespawnPacket) pk;
+    Vector3f pos = packet.getPosition();
+    if (pos == null) return;
+    org.CreadoresProgram.CraftsMine.network.protocol.RespawnPacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.RespawnPacket();
+    npk.x = pos.getX();
+    npk.y = pos.getY();
+    npk.z = pos.getZ();
+    player.sendDataCraftsman(npk);
+  }
 }

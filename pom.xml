@@ -24,12 +24,12 @@
     </repositories>
 
     <dependencies>
-        <dependency>
-            <groupId>org.cloudburstmc.protocol</groupId>
-            <artifactId>bedrock-connection</artifactId>
-            <version>3.0.0.Beta6-SNAPSHOT</version>
-            <scope>compile</scope>
-        </dependency>
+        <!-- CloudburstMC protocol dependency REMOVED. The downstream now
+             talks MCPE 1.1 (protocol v113) using the vendored NukkitX
+             protocol tree under src/main/java/com/nukkitx/protocol/bedrock/.
+             All 86 source files that previously imported org.cloudburstmc.*
+             have been migrated to com.nukkitx.* via the
+             migrate-cloudburst-to-nukkitx.js script. -->
         <dependency>
             <groupId>org.yaml</groupId>
             <artifactId>snakeyaml</artifactId>
@@ -50,6 +50,98 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
             <version>2.21.0</version>
+        </dependency>
+
+        <!-- ===== NukkitX dependencies imported from ProxyPassV113 =====
+             These power the com.nukkitx.protocol.bedrock.v113 codec that
+             the downstream will use to talk to MCPE 1.1 (protocol v113)
+             servers. The v113 codec and serializers are vendored in
+             src/main/java/com/nukkitx/protocol/bedrock/v113/ and depend
+             on the artifacts below. -->
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+            <version>3.0.2</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx</groupId>
+            <artifactId>common</artifactId>
+            <version>1.0.1-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.network</groupId>
+            <artifactId>common</artifactId>
+            <version>1.6.28-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx</groupId>
+            <artifactId>natives</artifactId>
+            <version>1.0.3</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx</groupId>
+            <artifactId>nbt</artifactId>
+            <version>2.2.0</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx</groupId>
+            <artifactId>math</artifactId>
+            <version>1.1.1</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.fastutil</groupId>
+            <artifactId>fastutil-int-object-maps</artifactId>
+            <version>8.5.3</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.fastutil</groupId>
+            <artifactId>fastutil-object-int-maps</artifactId>
+            <version>8.5.3</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.fastutil</groupId>
+            <artifactId>fastutil-int-int-maps</artifactId>
+            <version>8.5.3</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.network</groupId>
+            <artifactId>raknet</artifactId>
+            <version>1.6.28-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>9.13</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.fastutil</groupId>
+            <artifactId>fastutil-long-common</artifactId>
+            <version>8.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nukkitx.fastutil</groupId>
+            <artifactId>fastutil-long-object-maps</artifactId>
+            <version>8.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.lanternpowered</groupId>
+            <artifactId>lmbda</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>aircompressor</artifactId>
+            <version>0.21</version>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
 

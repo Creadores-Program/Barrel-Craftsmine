@@ -1,7 +1,7 @@
 package org.CreadoresProgram.CraftsMine.network.translator.interfaces;
 
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
 
 public interface BedrockPacketTranslator {
 

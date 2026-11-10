@@ -1,133 +1,59 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.AddPlayerPacket;
-import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
-import org.CreadoresProgram.CraftsMine.network.protocol.SetEntityLinkPacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.AddPlayerPacket;
+import com.nukkitx.math.vector.Vector3f;
 import org.CreadoresProgram.CraftsMine.inventory.Item;
-import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataTypes;
-import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataType;
-import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
 import java.util.HashMap;
-import java.util.Map;
-import io.netty.buffer.Unpooled;
-import io.netty.buffer.ByteBuf;
-import org.cloudburstmc.nbt.NBTInputStream;
-import org.cloudburstmc.nbt.NBTOutputStream;
-import org.cloudburstmc.protocol.common.util.stream.LittleEndianByteBufOutputStream;
-import org.CreadoresProgram.CraftsMine.server.Server;
-import java.io.IOException;
-import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-public class AddPlayer implements BedrockPacketTranslator {
 
-    @Override
-    public void translate(BedrockPacket pk, Player player) {
-        org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket packet = (org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket) pk;
-      AddPlayerPacket npk = new AddPlayerPacket();
-      npk.uuid = packet.getUuid();
-      npk.username = packet.getUsername();
-      npk.eid = packet.getRuntimeEntityId();
-      npk.x = (float) packet.getPosition().getX();
-      npk.y = (float) packet.getPosition().getY();
-      npk.z = (float) packet.getPosition().getZ();
-      npk.speedX = (float) packet.getMotion().getX();
-        npk.speedY = (float) packet.getMotion().getY();
-        npk.speedZ = (float) packet.getMotion().getZ();
-      npk.pitch = (float) packet.getRotation().getX();
-      npk.yaw = (float) packet.getRotation().getY();
-        byte[] nbt = new byte[0];
-        if(packet.getHand().getTag() != null){
-              ByteBuf buffer = Unpooled.buffer();
-              try (NBTOutputStream stream = new NBTOutputStream(new LittleEndianByteBufOutputStream(buffer))) {
-                stream.writeTag(packet.getHand().getTag());
-            } catch (IOException e) {
-                // This shouldn't happen (as this is backed by a Netty ByteBuf), but okay...
-                Server.getInstance().getLogger().error("Unable to save NBT data", e);
-              }
-              nbt = buffer.array();
-          }
-      npk.item = Item.translateItem(new Item(packet.getHand().getDefinition().getRuntimeId(), packet.getHand().getDamage(), packet.getHand().getCount(), nbt));
-        Map<Integer, Object[]> map = new HashMap<>();
-        for(EntityDataType arg : packet.getMetadata().keySet()){
-            if(arg == EntityDataTypes.NAME){
-                map.put(2, new Object[]{ 4, ((String) packet.getMetadata().get(arg)) });
-            }else if(arg == EntityDataTypes.PLAYER_FLAGS){
-                map.put(16, new Object[]{ 0, ((byte) packet.getMetadata().get(arg)) });
-            }else if(arg == EntityDataTypes.EFFECT_COLOR){
-                map.put(7, new Object[]{ 2, ((int) packet.getMetadata().get(arg)) });
-            }else if(arg == EntityDataTypes.EFFECT_AMBIENCE){
-                map.put(8, new Object[]{ 0, ((byte) packet.getMetadata().get(arg)) });
-            }else if(arg == EntityDataTypes.NAMETAG_ALWAYS_SHOW){
-                map.put(3, new Object[]{ 0, ((byte) packet.getMetadata().get(arg)) });
-            }else if(arg == EntityDataTypes.LEASH_HOLDER){
-                map.put(23, new Object[]{ 7, ((long) packet.getMetadata().get(arg)) });
-            }else if(arg == EntityDataTypes.AIR_SUPPLY){
-                map.put(1, new Object[]{ 1, ((short) packet.getMetadata().get(arg)) });
-            }
-        }
-        if(packet.getMetadata().getFlags().size() != 0){
-            long value = 0;
-                int lower = 0 * 64;
-                int upper = lower + 64;
-            int flagIndex = 0;
-            for(EntityFlag flag : packet.getMetadata().getFlags()){
-                switch(flag){
-                    case ON_FIRE:
-                        flagIndex = 0;
-                        break;
-                    case SNEAKING:
-                        flagIndex = 1;
-                        break;
-                    case RIDING:
-                        flagIndex = 2;
-                        break;
-                    case SPRINTING:
-                        flagIndex = 3;
-                        break;
-                    case INVISIBLE:
-                        flagIndex = 5;
-                        break;
-                    case SLEEPING:
-                        flagIndex = 1;
-                        break;
-                    case PLAYING_DEAD:
-                        flagIndex = 2;
-                        break;
-                    case BABY:
-                        flagIndex = 0;
-                        break;
-                    default:
-                        continue;
-                }
-                if(flagIndex >= lower && flagIndex < upper){
-                    value |= 1L << (flagIndex & 0x3f);
-                }
-            }
-            map.put(0, new Object[]{ 7, value });
-        }
-        npk.metadata = map;
-        player.sendDataCraftsman(npk);
-        player.getUniquesEntitysIds().put(packet.getUniqueEntityId(), packet.getRuntimeEntityId());
-        if(packet.getEntityLinks().size() > 0){
-            for(EntityLinkData link : packet.getEntityLinks()){
-                SetEntityLinkPacket n2pk = new SetEntityLinkPacket();
-                n2pk.rider = link.getFrom();
-                n2pk.riding = link.getTo();
-                switch(link.getType()){
-                    case REMOVE:
-                        n2pk.type = SetEntityLinkPacket.TYPE_REMOVE;
-                        break;
-                    case RIDER:
-                        n2pk.type = SetEntityLinkPacket.TYPE_RIDE;
-                        break;
-                    case PASSENGER:
-                        n2pk.type = SetEntityLinkPacket.TYPE_PASSENGER;
-                        break;
-                }
-                player.sendDataCraftsman(n2pk);
-            }
-        }
+/**
+ * Translates a v113 AddPlayerPacket (another player spawns into view) into
+ * the 0.15.x AddPlayerPacket and forwards it to the upstream client.
+ *
+ * <p>v113 rotation is a Vector3f (x=pitch, y=yaw, z=headYaw). 0.15.x
+ * serializes yaw twice (yaw and headYaw both equal to yaw) per the
+ * AddPlayer encode convention.</p>
+ *
+ * <p>ItemData hand → Item conversion: only id/damage/count are carried
+ * over; NBT tag is dropped because the 0.15.x Item constructor expects a
+ * NamedTag compound that would need a separate NbtMap → NamedTag
+ * translation step.</p>
+ */
+public class AddPlayer implements BedrockPacketTranslator{
+  @Override
+  public void translate(BedrockPacket pk, Player player){
+    AddPlayerPacket packet = (AddPlayerPacket) pk;
+    org.CreadoresProgram.CraftsMine.network.protocol.AddPlayerPacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.AddPlayerPacket();
+    npk.uuid = packet.getUuid();
+    npk.username = packet.getUsername() == null ? "" : packet.getUsername();
+    npk.eid = packet.getRuntimeEntityId();
+    Vector3f pos = packet.getPosition();
+    if (pos != null) {
+      npk.x = pos.getX();
+      npk.y = pos.getY();
+      npk.z = pos.getZ();
     }
+    Vector3f mot = packet.getMotion();
+    if (mot != null) {
+      npk.speedX = mot.getX();
+      npk.speedY = mot.getY();
+      npk.speedZ = mot.getZ();
+    }
+    Vector3f rot = packet.getRotation();
+    if (rot != null) {
+      npk.pitch = rot.getX();
+      npk.yaw = rot.getY();
+    }
+    // ItemData hand → 0.15.x Item (id, damage, count). NBT dropped.
+    com.nukkitx.protocol.bedrock.data.inventory.ItemData hand = packet.getHand();
+    if (hand != null && hand.getId() > 0) {
+      npk.item = new Item(hand.getId(), hand.getDamage(), hand.getCount(), new byte[0]);
+    } else {
+      npk.item = new Item(0, 0, 0, new byte[0]);
+    }
+    npk.metadata = new HashMap<>();
+    player.sendDataCraftsman(npk);
+  }
 }

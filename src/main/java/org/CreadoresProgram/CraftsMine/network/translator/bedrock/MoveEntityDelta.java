@@ -1,35 +1,31 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
-import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.math.vector.Vector3f;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket;
-import org.CreadoresProgram.CraftsMine.network.translator.ReloadAuthP;
+import org.CreadoresProgram.CraftsMine.player.Player;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.MoveEntityPacket;
+import com.nukkitx.math.vector.Vector3f;
+
+/**
+ * Same v113 source as MoveEntityAbsolute - both v113 MoveEntityAbsolutePacket
+ * and MoveEntityDeltaPacket were renamed by the migration script to
+ * MoveEntityPacket. This stub forwards the same way as MoveEntityAbsolute.
+ */
 public class MoveEntityDelta implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
-    org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket packet = (org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket) pk;
-    MoveEntitiesPacket npka = new MoveEntitiesPacket();
-    npka.eid = packet.getRuntimeEntityId();
-    double x = (double) packet.getX();
-    double y = (double) packet.getY();
-    double z = (double) packet.getZ();
-    npka.x = x;
-    npka.y = y;
-    npka.z = z;
-    double yaw = (double) packet.getYaw();
-    npka.yaw = yaw;
-    double pitch = (double) packet.getPitch();
-    npka.pitch = pitch;
-    npka.headYaw = (double) packet.getHeadYaw();
-    player.sendDataCraftsman(npka);
-    if(packet.getRuntimeEntityId() == player.getRuntimeEntityId()){
-      player.setOldPosition(player.getVector3f());
-      player.x = x;
-      player.y = y;
-      player.z = z;
-      player.yaw = (float) yaw;
-      player.pitch = (float) pitch;
+    MoveEntityPacket packet = (MoveEntityPacket) pk;
+    org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket();
+    npk.eid = packet.getRuntimeEntityId();
+    Vector3f pos = packet.getPosition();
+    if (pos != null) {
+      npk.x = pos.getX();
+      npk.y = pos.getY();
+      npk.z = pos.getZ();
     }
+    npk.pitch = packet.getPitch() & 0xFF;
+    npk.headYaw = packet.getHeadYaw() & 0xFF;
+    npk.yaw = packet.getYaw() & 0xFF;
+    player.sendDataCraftsman(npk);
   }
 }

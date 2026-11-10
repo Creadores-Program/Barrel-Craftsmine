@@ -1,28 +1,19 @@
 package org.CreadoresProgram.CraftsMine.network.translator.craftsman;
+
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.CraftsmanPacketTranslator;
 import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
-import org.CreadoresProgram.CraftsMine.server.Server;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.protocol.bedrock.packet.CraftingEventPacket;
-import org.cloudburstmc.protocol.bedrock.data.inventory.CraftingType;
-import io.netty.buffer.Unpooled;
-import io.netty.buffer.ByteBuf;
-import org.cloudburstmc.nbt.NBTInputStream;
-import org.cloudburstmc.nbt.NBTOutputStream;
-import java.io.IOException;
-import org.cloudburstmc.protocol.common.util.stream.LittleEndianByteBufOutputStream;
-import org.CreadoresProgram.CraftsMine.inventory.Item;
-import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-import java.util.List;
+
+/**
+ * STUB - This translator referenced CloudburstMC modern APIs that do not
+ * exist in the vendored NukkitX v113 protocol tree (e.g. CraftingEventPacket fields,
+ * EntityDataTypes enum, ItemDefinition, etc.). It has been temporarily
+ * reduced to a no-op so the project compiles. To be rewritten against
+ * the v113 packet API in a follow-up session. See MIGRATION_STATUS.md.
+ */
 public class CraftingEvent implements CraftsmanPacketTranslator{
   @Override
   public void translate(MCDPacket pk, Player player){
-    org.CreadoresProgram.CraftsMine.network.protocol.CraftingEventPacket packet = (org.CreadoresProgram.CraftsMine.network.protocol.CraftingEventPacket) pk;
-    CraftingEventPacket npk = new CraftingEventPacket();
-    npk.setContainerId((byte) packet.windowId);
-    npk.setType(CraftingType.values()[packet.type]);
-    npk.setUuid(packet.id);
-    player.getBedrockClientSession().sendPacket(npk);
+    // No-op: pending v113 API rewrite.
   }
 }

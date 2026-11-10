@@ -3,13 +3,30 @@ import org.CreadoresProgram.CraftsMine.player.Player;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.CraftsmanPacketTranslator;
 import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
 import org.CreadoresProgram.CraftsMine.server.Server;
-import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.DisconnectPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket;
+
+/**
+ * Receives the 0.15.x LoginPacket from the upstream client, validates the
+ * protocol id (80..90 = 0.15.x family), calls Player.onLogin() to bind the
+ * client's identity + skin to the Player and open the downstream BedrockClient
+ * session to the MCPE 1.1 server, and finally sends the v113 LoginPacket
+ * (built by Player.getLoginPacket()) to the downstream.
+ *
+ * <p>Adapted from the original Barrel-Craftsmine implementation. The
+ * CloudburstMC line {@code bedrockClientSession.getPeer().getCodecHelper()
+ * .setBlockDefinitions(...)} was removed because NukkitX v113 has no such
+ * API - block definitions are not registered on the session codec helper
+ * in v113, the runtime block palette is consulted directly via
+ * BlockMapper when needed.</p>
+ */
 public class LoginHPacket implements CraftsmanPacketTranslator{
   @Override
   public void translate(MCDPacket pk, Player player){
-    org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket packet = (org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket) pk;
+    org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket packet =
+        (org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket) pk;
+    // Reject clients outside the 0.15.x protocol family (80..90).
+    // 0.15.x wire protocol ids are 81..85 but some forks use 80 or 90.
     if(packet.protocol > 90){
       LoginStatusPacket sta = new LoginStatusPacket();
       sta.status = LoginStatusPacket.LOGIN_SUCCESS;
@@ -25,6 +42,7 @@ public class LoginHPacket implements CraftsmanPacketTranslator{
       player.sendDataCraftsman(discsub);
       return;
     }
+    // Enforce max players when the proxy is NOT in synchronous (query-MOTD) mode.
     if(!(Server.getInstance().getConfig().isSynchServer())){
       if(Server.getInstance().getBedrockPlayers().size() > Server.getInstance().getConfig().getMaxplayers()){
         LoginStatusPacket stas = new LoginStatusPacket();
@@ -37,16 +55,25 @@ public class LoginHPacket implements CraftsmanPacketTranslator{
       }
     }
     try{
+      // Bind the client identity to the Player and open the downstream
+      // BedrockClient session to the MCPE 1.1 server. This blocks up to
+      // 10 seconds on the RakNet handshake.
       player.onLogin(packet);
-      player.getBedrockClientSession().getPeer().getCodecHelper().setBlockDefinitions(Server.getInstance().getBlockDefinitions());
+      // Player.getLoginPacket() builds a v113 LoginPacket with chainData +
+      // clientData as AsciiString (the v113 wire format). Ship it.
       player.getBedrockClientSession().sendPacketImmediately(player.getLoginPacket());
     }catch(Exception e){
-      org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket spk = new org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket();
+      org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket spk =
+          new org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket();
       spk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.LOGIN_SUCCESS;
       player.sendDataCraftsman(spk);
       player.disconnect("Failed to connect: "+ e+" or Server Offline");
       return;
     }
-    Server.getInstance().getLogger().info(player.getCraftsmanUsername()+" Logged in");
+    String loginName = player.getCraftsmanUsername();
+    if(loginName == null || loginName.isEmpty()){
+      loginName = "Unknown";
+    }
+    Server.getInstance().getLogger().info(loginName+" Logged in");
   }
 }

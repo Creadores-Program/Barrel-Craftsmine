@@ -2,8 +2,8 @@ package org.CreadoresProgram.CraftsMine.player;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.cloudburstmc.math.GenericMath;
-import org.cloudburstmc.math.vector.Vector3f;
+import com.nukkitx.math.GenericMath;
+import com.nukkitx.math.vector.Vector3f;
 
 public class Vector3 {
 

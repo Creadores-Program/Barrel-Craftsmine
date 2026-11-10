@@ -66,6 +66,6 @@ public class Config {
     @Getter
     public Integer timeSynchServer;
 
-    @Getter
-    public String versionBedrockServer;
+    // versionBedrockServer removed: downstream is MCPE 1.1 (protocol v113)
+    // only, hard-wired in Server.java. No longer configurable.
 }

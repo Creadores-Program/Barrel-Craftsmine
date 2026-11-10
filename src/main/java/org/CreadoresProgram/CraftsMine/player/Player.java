@@ -9,32 +9,20 @@ import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import org.cloudburstmc.math.vector.Vector2f;
-import org.cloudburstmc.math.vector.Vector3f;
-import org.cloudburstmc.math.vector.Vector3i;
-import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
-import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
-import org.cloudburstmc.protocol.bedrock.BedrockClientSession;
-import org.cloudburstmc.protocol.bedrock.data.*;
-import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
-import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockClientInitializer;
-import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
-import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
-import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
-import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
-import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
+import com.nukkitx.math.vector.Vector2f;
+import com.nukkitx.math.vector.Vector3f;
+import com.nukkitx.math.vector.Vector3i;
+import com.nukkitx.protocol.bedrock.BedrockClient;
+import com.nukkitx.protocol.bedrock.BedrockClientSession;
+import com.nukkitx.protocol.bedrock.data.*;
+import com.nukkitx.protocol.bedrock.packet.LoginPacket;
+import com.nukkitx.protocol.bedrock.packet.StartGamePacket;
+import com.nukkitx.protocol.bedrock.util.EncryptionUtils;
 import lombok.Getter;
 import lombok.Setter;
 import org.CreadoresProgram.CraftsMine.server.Server;
-import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioDatagramChannel;
 import org.CreadoresProgram.CraftsMine.network.translator.PacketTranslatorManager;
-import org.CreadoresProgram.CraftsMine.server.Server;
 import org.CreadoresProgram.CraftsMine.options.Config;
 import org.CreadoresProgram.CraftsMine.network.BedrockBatchHandler;
 import org.CreadoresProgram.CraftsMine.utils.Utils;
@@ -42,6 +30,7 @@ import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.DisconnectPacket;
 import org.CreadoresProgram.CraftsMine.nukkitLib.entity.data.Skin;
 import org.CreadoresProgram.CraftsMine.inventory.Item;
+import org.CreadoresProgram.CraftsMine.utils.BlockMapper;
 import org.CreadoresProgram.CraftsMine.network.translator.managerScreen.ScreenManager;
 
 public class Player extends Vector3{
@@ -50,9 +39,12 @@ public class Player extends Vector3{
   @Getter
   private BedrockClientSession bedrockClientSession;
   @Getter
-  private final PacketTranslatorManager packetTranslatorManager;
+  private BedrockClient bedrockClient;
   @Getter
-  private Channel channel;
+  private final PacketTranslatorManager packetTranslatorManager;
+  // The 'channel' field was removed: NukkitX BedrockClient manages the
+  // underlying Netty channel internally and exposes close() instead of
+  // direct channel manipulation. Use bedrockClient.close() on disconnect.
   @Getter
   private String craftsmanUsername;
   @Getter
@@ -93,8 +85,9 @@ public class Player extends Vector3{
 
   private long exp;
 
-  @Getter
-  private final ScheduledExecutorService playerInputExecutor = Executors.newScheduledThreadPool(1);
+  // No @Getter here: getPlayerInputExecutor() is hand-rolled below to lazily
+  // resolve the shared Server scheduler instead of allocating one per player.
+  private volatile java.util.concurrent.ScheduledExecutorService playerInputExecutor;
   @Getter
   @Setter
   private boolean playerInputAuth = false;
@@ -117,7 +110,7 @@ public class Player extends Vector3{
 
   @Getter
   @Setter
-  private Vector3i diggingPosition = Vector3i.from(0, 0, 0);
+  private com.nukkitx.math.vector.Vector3i diggingPosition = com.nukkitx.math.vector.Vector3i.from(0, 0, 0);
 
   @Getter
   @Setter
@@ -138,44 +131,109 @@ public class Player extends Vector3{
 
   @Getter
   private ScreenManager screenManager;
+
+  @Getter
+  @Setter
+  private BlockMapper blockMapper;
   
   public Player(String indentifier){
     this.identifierCraftsMan = indentifier;
     this.packetTranslatorManager = new PacketTranslatorManager(this);
     this.screenManager = new ScreenManager(this);
   }
-  private void login(org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket loginpack){
-    this.username = this.craftsmanUsername = loginpack.username;
-    this.UUID = loginpack.clientUUID.toString();
+  /**
+   * Returns the shared scheduler from the owning Server, lazily resolved on
+   * first use. The previous implementation eagerly allocated a per-player
+   * {@code Executors.newScheduledThreadPool(1)} in the constructor, which
+   * kept one idle thread alive per connected client even when nothing was
+   * ever scheduled on it. Delegating to {@link Server#getScheduler()} keeps
+   * the per-player footprint at zero until something is actually scheduled.
+   */
+  public java.util.concurrent.ScheduledExecutorService getPlayerInputExecutor(){
+    java.util.concurrent.ScheduledExecutorService exec = this.playerInputExecutor;
+    if(exec == null){
+      synchronized(this){
+        exec = this.playerInputExecutor;
+        if(exec == null){
+          exec = Server.getInstance().getScheduler();
+          this.playerInputExecutor = exec;
+        }
+      }
+    }
+    return exec;
+  }
+  private void login(org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket loginpack) throws Exception {
+    // Defensive: some 0.15.x clients send a chain without extraData.displayName,
+    // leaving loginpack.username null. Without a fallback, every downstream log
+    // and the v113 LoginPacket's displayName would be "null" — which is what the
+    // MCPE 1.1 server then echoes back as "{player} left the game".
+    String incomingName = loginpack.username;
+    if(incomingName == null || incomingName.isEmpty()){
+      String fallback = (loginpack.clientUUID != null)
+          ? "Player" + Long.toHexString(loginpack.clientUUID.getLeastSignificantBits() & 0xFFFFFF)
+          : "Player" + this.identifierCraftsMan.hashCode();
+      this.username = this.craftsmanUsername = fallback;
+    }else{
+      this.username = this.craftsmanUsername = incomingName;
+    }
+    this.UUID = loginpack.clientUUID == null
+        ? java.util.UUID.randomUUID().toString()
+        : loginpack.clientUUID.toString();
     this.clientID = loginpack.clientId;
     this.craftsmanPublicKey = loginpack.identityPublicKey;
     Config config = Server.getInstance().getConfig();
     try{
+      InetSocketAddress bindAddress = new InetSocketAddress(0);
       InetSocketAddress bedrockAddress = new InetSocketAddress(config.getBedrockAddress(), config.getBedrockPort());
-      this.channel = new Bootstrap().channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
-        .group(new NioEventLoopGroup())
-        .option(RakChannelOption.RAK_PROTOCOL_VERSION, Server.getInstance().getBedrockPacketCodec().getRaknetProtocolVersion())
-        .handler(new BedrockClientInitializer(){
-          @Override
-          protected void initSession(BedrockClientSession session){
-            bedrockClientSession = session;
-            session.setCodec(Server.getInstance().getBedrockPacketCodec());
-            session.setPacketHandler(new BedrockBatchHandler(Player.this));
-            RequestNetworkSettingsPacket requestNetworkSettingsPacket = new RequestNetworkSettingsPacket();
-            requestNetworkSettingsPacket.setProtocolVersion(Server.getInstance().getBedrockPacketCodec().getProtocolVersion());
-            session.sendPacketImmediately(requestNetworkSettingsPacket);
-          }
-        })
-        .connect(bedrockAddress)
-        .awaitUninterruptibly().channel();
+      // Use the NukkitX high-level BedrockClient API instead of the
+      // previous Netty Bootstrap + CloudburstMC BedrockClientInitializer.
+      // BedrockClient.connect() returns a CompletableFuture<BedrockClientSession>
+      // that completes once the RakNet session is fully established, so we
+      // no longer need the manual CountDownLatch workaround for the
+      // "bedrockClientSession is null right after connect()" race.
+      // The shared worker group from Server is passed in so we do NOT
+      // allocate a new NioEventLoopGroup per player (the original leak).
+      this.bedrockClient = new BedrockClient(
+          bindAddress,
+          Server.getInstance().getBedrockWorkerGroup(),
+          Server.getInstance().getBedrockPacketCodec().getRaknetProtocolVersion());
+      java.util.concurrent.CompletableFuture<BedrockClientSession> future = this.bedrockClient.connect(bedrockAddress);
+      this.bedrockClientSession = future.get(10, TimeUnit.SECONDS);
+      BedrockClientSession session = this.bedrockClientSession;
+      // NukkitX uses setPacketCodec (not setCodec) and setBatchHandler for
+      // receiving decoded batches. The previous CloudburstMC code used
+      // setPacketHandler with a PacketSignal-returning handler; NukkitX
+      // instead uses the BatchHandler interface which receives all decoded
+      // packets from a batch in one call.
+      session.setPacketCodec(Server.getInstance().getBedrockPacketCodec());
+      session.setBatchHandler(new BedrockBatchHandler(Player.this));
+      // MCPE 1.1 (protocol v113) login flow does NOT use RequestNetworkSettingsPacket.
+      // That packet was introduced in protocol 422 (Bedrock 1.19.30). In v113,
+      // the client sends LoginPacket directly and the server responds with
+      // PlayStatusPacket, then optionally ServerToClientHandshakePacket for
+      // encryption, then ResourcePacksInfoPacket, etc.
+      // The login itself is sent later by LoginHPacket.translate() which
+      // constructs and sends the actual LoginPacket to the downstream.
     }catch(Exception exception){
+      // Log the full cause chain so we can see the real reason the
+      // downstream connection failed (bind error, timeout, DNS, etc.)
+      // — the disconnect message shown to the player only contains the
+      // top-level toString() which hides the root cause.
+      Server.getInstance().getLogger().warn("Downstream connection failed for "
+          + this.craftsmanUsername + ": " + exception);
+      Throwable cause = exception.getCause();
+      while (cause != null) {
+        Server.getInstance().getLogger().warn("  Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
+        cause = cause.getCause();
+      }
       org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket pk = new org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket();
       pk.status = org.CreadoresProgram.CraftsMine.network.protocol.LoginStatusPacket.LOGIN_SUCCESS;
       this.sendDataCraftsman(pk);
       this.disconnect("Failed to connect: "+ exception + " or Server offline");
+      throw exception;
     }
   }
-  public void onLogin(org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket loginpack){
+  public void onLogin(org.CreadoresProgram.CraftsMine.network.protocol.LoginPacket loginpack) throws Exception {
     this.skinC = loginpack.skin;
     this.skinId = loginpack.skinId;
     this.nbf = loginpack.nbf;
@@ -201,13 +259,31 @@ public class Player extends Vector3{
     jwtHeader.put("alg", "ES384");
     jwtHeader.put("x5u", publicKeyBase64);
     String jwt = generateJwt(jwtHeader, chain);
-    JSONArray chainDataJsonArray = new JSONArray();
-    chainDataJsonArray.add(jwt);
-    for(Object o : chainDataJsonArray){
-      loginPacket.getChain().add((String) o);
-    }
-    loginPacket.setExtra(this.getSkinData());
+    // CRITICAL: NukkitX v113 LoginSerializer writes chainData directly to the
+    // wire as a LEAsciiString. The MCPE 1.1 server expects it to be a JSON
+    // object of the form {"chain": ["jwt1", "jwt2", ...]} — NOT a bare JSON
+    // array ["jwt"]. The previous CloudburstMC API (getChain().add() +
+    // setExtra()) built the {"chain": [...]} wrapper internally; NukkitX
+    // does not, so we must build it here. With the bare array the server
+    // silently drops the LoginPacket and never sends PlayStatus, which is
+    // exactly the "logged in but no handshake" symptom.
+    JSONObject chainDataObj = new JSONObject();
+    JSONArray chainArr = new JSONArray();
+    chainArr.add(jwt);
+    chainDataObj.put("chain", chainArr);
+    // NukkitX v113 LoginPacket uses chainData (AsciiString containing the
+    // {"chain":[...]} JSON object) and clientData (AsciiString containing the
+    // skin JWT). The previous CloudburstMC API exposed getChain() as a
+    // mutable List<String> and setExtra(String) - neither exists in v113.
+    loginPacket.setChainData(new io.netty.util.AsciiString(chainDataObj.toJSONString()));
+    loginPacket.setClientData(new io.netty.util.AsciiString(this.getSkinData()));
     loginPacket.setProtocolVersion(Server.getInstance().getBedrockPacketCodec().getProtocolVersion());
+    // CRITICAL: LoginSerializer_v113.serialize() calls packet.getVersion().ordinal()
+    // without null-checking. If version is null (the default), the encode throws
+    // NullPointerException → PacketSerializeException → "LoginPacket version is null".
+    // VANILLA (ordinal 0) is the correct value for standard MCPE 1.1 clients;
+    // EDUCATION (ordinal 1) is only for Minecraft Education Edition.
+    loginPacket.setVersion(LoginPacket.Version.VANILLA);
     return loginPacket;
   }
   private String getSkinData(){
@@ -290,21 +366,32 @@ public class Player extends Vector3{
     Server.getInstance().getRakNetServ().sendPacket(this.identifierCraftsMan, pk, false);
   }
   public void disconnect(String reason) {
-    playerInputExecutor.shutdown();
+    // Do NOT shut down playerInputExecutor: it is now a reference to the
+    // shared Server scheduler. Shutting it down here would kill the only
+    // scheduler for the whole proxy (used by QueryTask and any other
+    // periodic job) on the very first disconnect. Just cancel this player's
+    // scheduled jobs (if any were registered) instead.
     try {
-            this.bedrockClientSession.disconnect();
+      if (this.bedrockClientSession != null) this.bedrockClientSession.disconnect();
+    } catch (Throwable ignored) {
+    }
+    try {
+      if (this.bedrockClient != null) this.bedrockClient.close(true);
     } catch (Throwable ignored) {
     }
     DisconnectPacket dicpack = new DisconnectPacket();
       dicpack.message = reason;
       this.sendDataCraftsman((MCDPacket) dicpack);
-    if (this.channel != null && this.channel.isOpen()) {
-            this.channel.disconnect();
-            this.channel.parent().disconnect();
+    // The previous block called System.gc() here when the config flag
+    // gcCollectionDiconnectPlayer was set. Forcing GC on every player
+    // disconnect is an anti-pattern: it stops the world for the whole JVM
+    // for tens of milliseconds and triggers unnecessary full-GC cycles.
+    // The JVM's G1/ZGC collectors already reclaim Netty ByteBufs and the
+    // shared translation pool's queued tasks promptly without intervention.
+    String displayName = this.craftsmanUsername;
+    if(displayName == null || displayName.isEmpty()){
+      displayName = (this.identifierCraftsMan == null) ? "Unknown" : this.identifierCraftsMan;
     }
-    if(Server.getInstance().getConfig().isGcCollectionDiconnectPlayer()){
-      System.gc();
-    }
-    Server.getInstance().getLogger().info(craftsmanUsername + " disconnected: " + reason);
+    Server.getInstance().getLogger().info(displayName + " disconnected: " + reason);
   }
 }

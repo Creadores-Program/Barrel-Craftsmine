@@ -3,13 +3,26 @@ package org.CreadoresProgram.CraftsMine.utils;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import lombok.Getter;
-import org.cloudburstmc.nbt.NbtMap;
-import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
-import org.cloudburstmc.protocol.common.DefinitionRegistry;
+import com.nukkitx.nbt.NbtMap;
 
 import java.util.List;
 
-public class NbtBlockDefinitionRegistry implements DefinitionRegistry<BlockDefinition> {
+/**
+ * Loads the block_palette.nbt bundled with the proxy and exposes a
+ * runtime-id -> {@link NbtBlockDefinition} lookup.
+ *
+ * <p>This class previously implemented the CloudburstMC
+ * {@code DefinitionRegistry<BlockDefinition>} interface and the inner
+ * {@link NbtBlockDefinition} implemented {@code BlockDefinition}. Neither
+ * of those interfaces exists in the vendored NukkitX v113 protocol tree,
+ * so the class is now a plain utility without any framework interface.
+ * Callers ({@link org.CreadoresProgram.CraftsMine.network.translator.bedrock.UpdateBlock}
+ * and StartGame translators) consume the NBT definition directly via
+ * {@link #getDefinition(int)} which returns the inner
+ * {@link NbtBlockDefinition} holding the runtime id and the original
+ * {@link NbtMap} tag.</p>
+ */
+public class NbtBlockDefinitionRegistry {
 
     private final Int2ObjectMap<NbtBlockDefinition> definitions = new Int2ObjectOpenHashMap<>();
 
@@ -21,17 +34,19 @@ public class NbtBlockDefinitionRegistry implements DefinitionRegistry<BlockDefin
         }
     }
 
-    @Override
-    public BlockDefinition getDefinition(int runtimeId) {
+    public NbtBlockDefinition getDefinition(int runtimeId) {
         return definitions.get(runtimeId);
     }
 
-    @Override
-    public boolean isRegistered(BlockDefinition definition) {
+    public boolean isRegistered(NbtBlockDefinition definition) {
         return definitions.get(definition.getRuntimeId()) == definition;
     }
 
-    private static class NbtBlockDefinition implements BlockDefinition {
+    /**
+     * Plain holder for a block's runtime id and its source NBT definition.
+     * The CloudburstMC {@code BlockDefinition} interface has been removed.
+     */
+    public static class NbtBlockDefinition {
         @Getter
         private final int runtimeId;
         @Getter

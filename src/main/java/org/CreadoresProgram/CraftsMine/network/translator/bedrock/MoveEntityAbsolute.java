@@ -1,37 +1,34 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
-import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.math.vector.Vector3f;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket;
-import org.CreadoresProgram.CraftsMine.network.translator.ReloadAuthP;
+import org.CreadoresProgram.CraftsMine.player.Player;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.MoveEntityPacket;
+import com.nukkitx.math.vector.Vector3f;
+
+/**
+ * Translates a v113 MoveEntityPacket (server moves a mob) into the 0.15.x
+ * MoveEntitiesPacket (which serialises a single entity: eid + 3 floats +
+ * 3 bytes for pitch/headYaw/yaw scaled to 0..255).
+ *
+ * <p>v113 rotation bytes: pitch, headYaw, yaw are already in 0..255 range
+ * (degrees * 256/360 rounded). 0.15.x expects the same scale.</p>
+ */
 public class MoveEntityAbsolute implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
-    org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket packet = (org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket) pk;
+    MoveEntityPacket packet = (MoveEntityPacket) pk;
+    org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket();
+    npk.eid = packet.getRuntimeEntityId();
     Vector3f pos = packet.getPosition();
-    Vector3f rot = packet.getRotation();
-    MoveEntitiesPacket npka = new MoveEntitiesPacket();
-    npka.eid = packet.getRuntimeEntityId();
-    double x = (double) pos.getX();
-    double y = (double) pos.getY();
-    double z = (double) pos.getZ();
-    npka.x = x;
-    npka.y = y;
-    npka.z = z;
-    double yaw = (double) rot.getY();
-    npka.yaw = yaw;
-    double pitch = (double) rot.getX();
-    npka.pitch = pitch;
-    npka.headYaw = 1;
-    player.sendDataCraftsman(npka);
-    if(packet.getRuntimeEntityId() == player.getRuntimeEntityId()){
-      player.setOldPosition(player.getVector3f());
-      player.x = x;
-      player.y = y;
-      player.z = z;
-      player.yaw = (float) yaw;
-      player.pitch = (float) pitch;
+    if (pos != null) {
+      npk.x = pos.getX();
+      npk.y = pos.getY();
+      npk.z = pos.getZ();
     }
+    npk.pitch = packet.getPitch() & 0xFF;
+    npk.headYaw = packet.getHeadYaw() & 0xFF;
+    npk.yaw = packet.getYaw() & 0xFF;
+    player.sendDataCraftsman(npk);
   }
 }

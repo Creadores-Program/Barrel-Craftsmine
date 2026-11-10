@@ -1,25 +1,28 @@
 package org.CreadoresProgram.CraftsMine.network.translator;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.protocol.bedrock.packet.*;
+import org.CreadoresProgram.CraftsMine.server.Server;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.*;
 import lombok.Getter;
 import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.*;
 import org.CreadoresProgram.CraftsMine.network.translator.craftsman.*;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
+/**
+ * Per-player translator registry. Holds the bidirectional map between packet
+ * classes and translator instances and dispatches translation jobs to the
+ * shared thread pool owned by {@link Server#getTranslationExecutor()}.
+ *
+ * <p>Previously this class created its own {@code ThreadPoolExecutor} per
+ * player with {@code maxPoolSize = Integer.MAX_VALUE}, which under bursty
+ * traffic produced one unbounded worker pool per connected client. Sharing a
+ * single capped pool across all players keeps steady-state thread and memory
+ * usage flat regardless of how many clients are connected.</p>
+ */
 public class PacketTranslatorManager {
-  private final ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(
-    Runtime.getRuntime().availableProcessors(),
-    Integer.MAX_VALUE,
-    60,
-    TimeUnit.SECONDS,
-    new SynchronousQueue<>(),
-    new ThreadPoolExecutor.CallerRunsPolicy()
-  );
   @Getter
   private final Map<Class<? extends MCDPacket>, CraftsmanPacketTranslator> craftsmanTranslators = new HashMap<>();
   @Getter
@@ -54,34 +57,39 @@ public class PacketTranslatorManager {
     bedrockTranslators.put(ContainerSetDataPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.ContainerSetData());
     bedrockTranslators.put(ExplodePacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.Explode());
     bedrockTranslators.put(HurtArmorPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.HurtArmor());
-    bedrockTranslators.put(InventoryContentPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.InventoryContent());
-    bedrockTranslators.put(InventorySlotPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.InventorySlot());
-//    bedrockTranslators.put(UpdateBlockPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.UpdateBlock());
+    bedrockTranslators.put(ContainerSetContentPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.ContainerSetContent());
+    bedrockTranslators.put(ContainerSetSlotPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.ContainerSetSlot());
+    bedrockTranslators.put(UpdateBlockPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.UpdateBlock());
     bedrockTranslators.put(AddPaintingPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddPainting());
     bedrockTranslators.put(MobEffectPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MobEffect());
     bedrockTranslators.put(ChunkRadiusUpdatedPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.ChunkRadiusUpdated());
     bedrockTranslators.put(InteractPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.Interact());
     bedrockTranslators.put(PlayerActionPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.PlayerAction());
-//    bedrockTranslators.put(LevelChunkPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.LevelChunk());
-//    bedrockTranslators.put(AddPlayerPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddPlayer());
-//    bedrockTranslators.put(UpdateAttributesPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.UpdateAttributes());
+    bedrockTranslators.put(FullChunkDataPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.FullChunkData());
+    bedrockTranslators.put(AddPlayerPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddPlayer());
+    bedrockTranslators.put(UpdateAttributesPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.UpdateAttributes());
     bedrockTranslators.put(LevelEventPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.LevelEventT());
-//    bedrockTranslators.put(AddEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddEntity());
-//    bedrockTranslators.put(MoveEntityAbsolutePacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MoveEntityAbsolute());
-//    bedrockTranslators.put(MoveEntityDeltaPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MoveEntityDelta());
+    bedrockTranslators.put(AddEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddEntity());
+    bedrockTranslators.put(MoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MoveEntityAbsolute());
+    bedrockTranslators.put(MoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MoveEntityDelta());
     bedrockTranslators.put(EntityEventPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.EntityEvent());
-//    bedrockTranslators.put(RemoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.RemoveEntity());
-//    bedrockTranslators.put(SetEntityLinkPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityLink());
-//    bedrockTranslators.put(SetEntityMotionPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityMotion());
-//    bedrockTranslators.put(SetEntityDataPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityData());
+    bedrockTranslators.put(RemoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.RemoveEntity());
+    bedrockTranslators.put(SetEntityLinkPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityLink());
+    bedrockTranslators.put(SetEntityMotionPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityMotion());
+    bedrockTranslators.put(SetEntityDataPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityData());
     bedrockTranslators.put(BlockEventPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.BlockEvent());
     bedrockTranslators.put(AdventureSettingsPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AdventureSettings());
-//    bedrockTranslators.put(AddItemEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddItemEntity());
-//    bedrockTranslators.put(TakeItemEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.TakeItemEntity());
+    bedrockTranslators.put(AddItemEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddItemEntity());
+    bedrockTranslators.put(TakeItemEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.TakeItemEntity());
     bedrockTranslators.put(MobArmorEquipmentPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MobArmorEquipment());
     bedrockTranslators.put(MobEquipmentPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MobEquipment());
-//    bedrockTranslators.put(BlockEntityDataPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.BlockEntityData());
-    bedrockTranslators.put(SetScorePacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetScore());
+    bedrockTranslators.put(BlockEntityDataPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.BlockEntityData());
+    // SetScorePacket does not exist in NukkitX v113. Scoreboards in v113 are
+    // managed via SetScoreboardIdentityPacket / SetScoreboardScorePacket
+    // which are not yet implemented as translators. The previous
+    // bedrockTranslators.put(SetScorePacket.class, ...) line has been
+    // removed; restore it once the v113 scoreboard packet translators are
+    // written.
     bedrockTranslators.put(BossEventPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.BossEvent());
 
     //Craftsman packets
@@ -109,11 +117,16 @@ public class PacketTranslatorManager {
     craftsmanTranslators.put(org.CreadoresProgram.CraftsMine.network.protocol.MobEquipmentPacket.class, new MobEquipment());
     craftsmanTranslators.put(org.CreadoresProgram.CraftsMine.network.protocol.UpdateBlockPacket.class, new UpdateBlock());
     craftsmanTranslators.put(org.CreadoresProgram.CraftsMine.network.protocol.BlockEntityDataPacket.class, new BlockEntityData());
+    // Gameplay-critical client→server translators that were missing:
+    craftsmanTranslators.put(org.CreadoresProgram.CraftsMine.network.protocol.RemoveBlockPacket.class, new RemoveBlock());
+    craftsmanTranslators.put(org.CreadoresProgram.CraftsMine.network.protocol.UseItemPacket.class, new UseItem());
+    craftsmanTranslators.put(org.CreadoresProgram.CraftsMine.network.protocol.DropItemPacket.class, new DropItem());
   }
   public void translate(MCDPacket pk){
     CraftsmanPacketTranslator translator = craftsmanTranslators.get(pk.getClass());
     if(translator != null){
-      threadPoolExecutor.execute(() -> translator.translate(pk, player));
+      ThreadPoolExecutor pool = Server.getInstance().getTranslationExecutor();
+      pool.execute(() -> translator.translate(pk, player));
     }
   }
   public void translate(BedrockPacket pk){
@@ -122,7 +135,8 @@ public class PacketTranslatorManager {
       if(translator.immediate()){
         translator.translate(pk, player);
       }else{
-        threadPoolExecutor.execute(() -> translator.translate(pk, player));
+        ThreadPoolExecutor pool = Server.getInstance().getTranslationExecutor();
+        pool.execute(() -> translator.translate(pk, player));
       }
     }
   }

@@ -13,27 +13,23 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
 import java.net.URL;
-import javax.swing.Timer;
-import java.awt.event.ActionListener;
-import java.awt.event.ActionEvent;
-import org.cloudburstmc.nbt.NBTInputStream;
-import org.cloudburstmc.nbt.NbtMap;
-import org.cloudburstmc.nbt.NbtType;
-import org.cloudburstmc.nbt.NbtUtils;
-import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
-//1.7
-import org.cloudburstmc.protocol.bedrock.codec.v291.Bedrock_v291;
-//1.8
-import org.cloudburstmc.protocol.bedrock.codec.v313.Bedrock_v313;
-//1.9
-import org.cloudburstmc.protocol.bedrock.codec.v332.Bedrock_v332;
-//1.10
-import org.cloudburstmc.protocol.bedrock.codec.v340.Bedrock_v340;
-import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
-import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
-import org.cloudburstmc.protocol.bedrock.codec.BaseBedrockCodecHelper;
+import com.nukkitx.nbt.NBTInputStream;
+import com.nukkitx.nbt.NbtMap;
+import com.nukkitx.nbt.NbtType;
+import com.nukkitx.nbt.NbtUtils;
+// ===== MCPE 1.1 (protocol v113) codec vendored from ProxyPassV113 =====
+// All CloudburstMC modern codecs (1.7/1.8/1.9/1.10) have been removed.
+// The downstream now talks MCPE 1.1 (protocol v113) exclusively.
+import com.nukkitx.protocol.bedrock.v113.Bedrock_v113;
+import com.nukkitx.protocol.bedrock.BedrockPacketCodec;
 import org.CreadoresProgram.CraftsMine.player.Player;
 import org.CreadoresProgram.CraftsMine.options.Config;
 import org.CreadoresProgram.CraftsMine.utils.FileManager;
@@ -45,7 +41,28 @@ public class Server{
   @Getter
   private final Map<String, Player> bedrockPlayers = new ConcurrentHashMap<>();
   @Getter
-  private BedrockCodec bedrockPacketCodec = null;
+  private BedrockPacketCodec bedrockPacketCodec = Bedrock_v113.V113_CODEC;
+  /**
+   * MCPE 1.1 (protocol v113) codec vendored from ProxyPassV113. Exposed as a
+   * public static final constant so {@link org.CreadoresProgram.CraftsMine.player.Player}
+   * and the bedrock translators can reference it directly.
+   *
+   * <p>Constants exposed:</p>
+   * <ul>
+   *   <li>{@code V113_CODEC.getProtocolVersion()} returns {@code 113}</li>
+   *   <li>{@code V113_CODEC.getMinecraftVersion()} returns {@code "1.1.0"}</li>
+   *   <li>{@code V113_CODEC.getRaknetProtocolVersion()} returns {@code 8}</li>
+   * </ul>
+   */
+  @Getter
+  public static final BedrockPacketCodec V113_CODEC = Bedrock_v113.V113_CODEC;
+  /**
+   * Returns the protocol version exposed to clients via MOTD/ping.
+   * @return 113 (MCPE 1.1)
+   */
+  public int getDownstreamProtocolVersion() {
+    return V113_CODEC.getProtocolVersion();
+  }
   @Getter
   private final Path dataPath;
   @Getter
@@ -64,6 +81,62 @@ public class Server{
 
   private ThreadTik ticker;
   private CommandExecutor commandDetect;
+  @Getter
+  private ScheduledExecutorService scheduler;
+  /**
+   * Shared translation thread pool. Previously each {@link Player} created its
+   * own {@code ThreadPoolExecutor} with {@code maxPoolSize = Integer.MAX_VALUE}
+   * and a {@code SynchronousQueue}, which meant that under any sustained burst
+   * of packets the proxy spawned an unbounded number of worker threads (one
+   * pool per connected client). This shared pool caps concurrency to
+   * {@code 2 * availableProcessors} and queues up to 1024 pending tasks per
+   * core before applying back-pressure via {@code CallerRunsPolicy}. That
+   * keeps steady-state memory and thread churn flat regardless of player
+   * count.
+   */
+  @Getter
+  private final ThreadPoolExecutor translationExecutor = buildTranslationPool();
+  /**
+   * Shared Netty event loop group for all downstream Bedrock clients. The
+   * original code allocated one {@code NioEventLoopGroup} per player inside
+   * {@link Player#login} and only called {@code channel.disconnect()}, never
+   * {@code shutdownGracefully()} - so every connect/disconnect cycle leaked
+   * a Netty thread pool (default {@code 2 * cores} threads each).
+   *
+   * <p>IMPORTANT: we use {@link com.nukkitx.network.util.EventLoops#newEventLoopGroup(int)}
+   * instead of {@code new NioEventLoopGroup(...)}. The RakNet Bootstrap
+   * auto-detects the platform channel type (Epoll on Linux, Kqueue on Mac,
+   * NIO elsewhere) via {@code EventLoops.getChannelType()} and sets the
+   * matching DatagramChannel class on the Bootstrap. If we force a
+   * NioEventLoopGroup but the platform is Linux with Epoll available,
+   * the Bootstrap will try to open an EpollDatagramChannel with a
+   * NioEventLoopGroup — which fails with "Failed to bind RakNetClient".
+   * EventLoops.newEventLoopGroup() creates the correct EventLoopGroup
+   * subclass for the detected channel type, so the Bootstrap's channel
+   * class and the EventLoopGroup always match.</p>
+   */
+  @Getter
+  private final io.netty.channel.EventLoopGroup bedrockWorkerGroup =
+      com.nukkitx.network.util.EventLoops.newEventLoopGroup(
+          Math.max(2, Runtime.getRuntime().availableProcessors()));
+
+  private static ThreadPoolExecutor buildTranslationPool(){
+    int cores = Runtime.getRuntime().availableProcessors();
+    ThreadPoolExecutor pool = new ThreadPoolExecutor(
+        Math.max(2, cores),
+        Math.max(4, cores * 2),
+        60L, TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(1024),
+        r -> {
+          Thread t = new Thread(r, "CraftsMine-translate");
+          t.setDaemon(true);
+          return t;
+        },
+        new ThreadPoolExecutor.CallerRunsPolicy()
+    );
+    pool.allowCoreThreadTimeOut(true);
+    return pool;
+  }
 
   @Getter
   private String softwareVersion = "0.3.1";
@@ -96,72 +169,31 @@ public class Server{
         System.exit(1);
       }
     }
-    if(this.config.isGcCollectionAuto()){
-      int tikGc = 1800000;
-      if(this.config.getGcCollectionTime() < 1){
-        this.getLogger().warn("The value of gcCollectionTime is invalid!");
-        this.getLogger().info("Using the default time...");
-      }else{
-        tikGc = (int) this.config.getGcCollectionTime();
-      }
-      Timer timer = new Timer(tikGc, new ActionListener(){
-        public void actionPerformed(ActionEvent e){
-          System.gc();
-        }
-      });
-      timer.setRepeats(true);
-      timer.start();
-    }
+    // Shared single-thread scheduler replaces the previous per-task javax.swing.Timer
+    // instances. Swing Timer requires AWT and spins a hidden thread per task; this
+    // approach uses one daemon thread for both periodic tasks and avoids System.gc()
+    // explicit calls (the JVM GC is automatic and tuned by G1 settings).
+    this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+      Thread t = new Thread(r, "CraftsMine-scheduler");
+      t.setDaemon(true);
+      return t;
+    });
     if(this.config.isSynchServer()){
-      int tikQuery = 15000;
+      int tikQuery = 15;
       if(this.config.getTimeSynchServer() < 1){
         this.getLogger().warn("The value of timeSynchServer is invalid!");
         this.getLogger().info("Using the default time...");
       }else{
-        tikQuery = (int) this.config.getTimeSynchServer();
+        tikQuery = (int) (this.config.getTimeSynchServer() / 1000L);
+        if(tikQuery < 1) tikQuery = 15;
       }
-      Timer timerQ = new Timer(tikQuery, new QueryTask());
-      timerQ.setRepeats(true);
-      timerQ.start();
+      this.scheduler.scheduleAtFixedRate(new QueryTask(), tikQuery, tikQuery, TimeUnit.SECONDS);
     }
-    switch(this.config.getVersionBedrockServer()){
-      case "1.8":
-        this.bedrockPacketCodec = Bedrock_v313.CODEC.toBuilder().helper(()->{
-          BaseBedrockCodecHelper codec = (BaseBedrockCodecHelper) Bedrock_v313.CODEC.createHelper();
-          codec.setEncodingSettings(EncodingSettings.CLIENT);
-          return (BedrockCodecHelper) codec;
-        }).build();
-        break;
-      case "1.9":
-        this.bedrockPacketCodec = Bedrock_v332.CODEC.toBuilder().helper(()->{
-          BaseBedrockCodecHelper codec = (BaseBedrockCodecHelper) Bedrock_v332.CODEC.createHelper();
-          codec.setEncodingSettings(EncodingSettings.CLIENT);
-          return (BedrockCodecHelper) codec;
-        }).build();
-        break;
-      case "1.10":
-        this.bedrockPacketCodec = Bedrock_v340.CODEC.toBuilder().helper(()->{
-          BaseBedrockCodecHelper codec = (BaseBedrockCodecHelper) Bedrock_v340.CODEC.createHelper();
-          codec.setEncodingSettings(EncodingSettings.CLIENT);
-          return (BedrockCodecHelper) codec;
-        }).build();
-        break;
-      case "1.7":
-        this.bedrockPacketCodec = Bedrock_v291.CODEC.toBuilder().helper(()->{
-          BaseBedrockCodecHelper codec = (BaseBedrockCodecHelper) Bedrock_v291.CODEC.createHelper();
-          codec.setEncodingSettings(EncodingSettings.CLIENT);
-          return (BedrockCodecHelper) codec;
-        }).build();
-        break;
-      default:
-        this.bedrockPacketCodec = Bedrock_v291.CODEC.toBuilder().helper(()->{
-          BaseBedrockCodecHelper codec = (BaseBedrockCodecHelper) Bedrock_v291.CODEC.createHelper();
-          codec.setEncodingSettings(EncodingSettings.CLIENT);
-          return (BedrockCodecHelper) codec;
-        }).build();
-        this.getLogger().warn("Version Not Found Using 1.7!");
-        break;
-    }
+    // Downstream codec is hard-wired to MCPE 1.1 (protocol v113).
+    // The previous switch statement selected between CloudburstMC modern
+    // codecs (1.7/1.8/1.9/1.10) - those dependencies have been removed
+    // entirely and the versionBedrockServer config field no longer exists.
+    this.bedrockPacketCodec = Bedrock_v113.V113_CODEC;
     this.getLogger().info("Loading Block Definitions...");
     loadBlockDefinitions();
     this.getLogger().info("Loading Default Skin...");
@@ -219,7 +251,6 @@ public class Server{
     this.commandDetect = new CommandExecutor(this);
     this.commandDetect.start();
     this.getLogger().info("Done!");
-    System.gc();
   }
   public void stopServer(){
     this.getLogger().info("Turning off Proxy...");
@@ -229,6 +260,9 @@ public class Server{
     this.getLogger().info("Turning off Threads...");
     this.ticker.isOn = false;
     this.commandDetect.isOn = false;
+    this.scheduler.shutdownNow();
+    this.translationExecutor.shutdownNow();
+    try { this.bedrockWorkerGroup.shutdownGracefully().await(2, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
     this.getLogger().info("Turning off RakNet Server by Nukkit MagmaBlock Edition...");
     rakNetServ.shutdown();
     this.getLogger().info("CraftsMine Offline!");

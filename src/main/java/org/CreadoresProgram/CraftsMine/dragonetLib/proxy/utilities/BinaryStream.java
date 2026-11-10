@@ -288,6 +288,7 @@ public class BinaryStream {
             this.putShort((int) (item.itemIns[1]));
         }
         byte[] nbt = (byte[]) item.itemIns[3];
+        if (nbt == null) nbt = new byte[0];
         this.putLShort(nbt.length);
         this.put(nbt);
     }

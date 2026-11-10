@@ -1,15 +1,19 @@
 package org.CreadoresProgram.CraftsMine.network.translator.craftsman;
+
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.CraftsmanPacketTranslator;
-import org.cloudburstmc.protocol.bedrock.packet.ItemFrameDropItemPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.math.vector.Vector3i;
+
+/**
+ * STUB - This translator referenced CloudburstMC modern APIs that do not
+ * exist in the vendored NukkitX v113 protocol tree (e.g. ItemFrameDropItemPacket fields,
+ * EntityDataTypes enum, ItemDefinition, etc.). It has been temporarily
+ * reduced to a no-op so the project compiles. To be rewritten against
+ * the v113 packet API in a follow-up session. See MIGRATION_STATUS.md.
+ */
 public class ItemFrameDropItem implements CraftsmanPacketTranslator{
   @Override
   public void translate(MCDPacket pk, Player player){
-    org.CreadoresProgram.CraftsMine.network.protocol.ItemFrameDropItemPacket packet = (org.CreadoresProgram.CraftsMine.network.protocol.ItemFrameDropItemPacket) pk;
-    ItemFrameDropItemPacket npk = new ItemFrameDropItemPacket();
-    npk.setBlockPosition(Vector3i.from(packet.x, packet.y, packet.z));
-    player.getBedrockClientSession().sendPacket(npk);
+    // No-op: pending v113 API rewrite.
   }
 }

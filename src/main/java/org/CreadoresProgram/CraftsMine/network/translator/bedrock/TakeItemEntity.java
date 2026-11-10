@@ -1,17 +1,25 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.PickUpItemPacket;
-import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-public class TakeItemEntity implements BedrockPacketTranslator {
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.TakeItemEntityPacket;
 
-    @Override
-    public void translate(BedrockPacket pk, Player player) {
-        org.cloudburstmc.protocol.bedrock.packet.TakeItemEntityPacket packet = (org.cloudburstmc.protocol.bedrock.packet.TakeItemEntityPacket) pk;
-      PickUpItemPacket npk = new PickUpItemPacket();
-      npk.entityId = packet.getRuntimeEntityId();
-        npk.target = packet.getItemRuntimeEntityId();
-        player.sendDataCraftsman(npk);
-    }
+/**
+ * v113 TakeItemEntityPacket (itemRuntimeEntityId, runtimeEntityId) →
+ * 0.15.x PickUpItemPacket (target=collector, entityId=item).
+ *
+ * <p>Wire order is inverted: v113 sends item first then collector;
+ * 0.15.x sends collector (target) first then item (entityId).</p>
+ */
+public class TakeItemEntity implements BedrockPacketTranslator{
+  @Override
+  public void translate(BedrockPacket pk, Player player){
+    TakeItemEntityPacket packet = (TakeItemEntityPacket) pk;
+    org.CreadoresProgram.CraftsMine.network.protocol.PickUpItemPacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.PickUpItemPacket();
+    // 0.15.x target = the entity that picks up; entityId = the item entity.
+    npk.target = packet.getRuntimeEntityId();
+    npk.entityId = packet.getItemRuntimeEntityId();
+    player.sendDataCraftsman(npk);
+  }
 }

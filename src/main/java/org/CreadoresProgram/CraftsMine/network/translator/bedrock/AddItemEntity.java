@@ -1,43 +1,37 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.AddItemEntityPacket;
-import io.netty.buffer.Unpooled;
-import io.netty.buffer.ByteBuf;
-import org.cloudburstmc.nbt.NBTInputStream;
-import org.cloudburstmc.nbt.NBTOutputStream;
-import java.io.IOException;
-import org.cloudburstmc.protocol.common.util.stream.LittleEndianByteBufOutputStream;
-import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.CreadoresProgram.CraftsMine.server.Server;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.AddItemEntityPacket;
+import com.nukkitx.math.vector.Vector3f;
 import org.CreadoresProgram.CraftsMine.inventory.Item;
-public class AddItemEntity implements BedrockPacketTranslator {
 
-    @Override
-    public void translate(BedrockPacket pk, Player player) {
-        org.cloudburstmc.protocol.bedrock.packet.AddItemEntityPacket packet = (org.cloudburstmc.protocol.bedrock.packet.AddItemEntityPacket) pk;
-      byte[] nbt = new byte[0];
-      if(packet.getItemInHand().getTag() != null){
-        ByteBuf buffer = Unpooled.buffer();
-        try(NBTOutputStream stream = new NBTOutputStream(new LittleEndianByteBufOutputStream(buffer))){
-          stream.writeTag(packet.getItemInHand().getTag());
-        }catch(IOException e){
-          Server.getInstance().getLogger().error("Unable to save NBT data", e);
-        }
-        nbt = buffer.array();
-      }
-      Item item = Item.translateItem(new Item(packet.getItemInHand().getDefinition().getRuntimeId(), packet.getItemInHand().getDamage(), packet.getItemInHand().getCount(), nbt));
-      AddItemEntityPacket npk = new AddItemEntityPacket();
-      npk.item = item;
-      npk.eid = packet.getRuntimeEntityId();
-      player.getUniquesEntitysIds().put(packet.getUniqueEntityId(), packet.getRuntimeEntityId());
-      npk.x = (float) packet.getPosition().getX();
-      npk.y = (float) packet.getPosition().getY();
-      npk.z = (float) packet.getPosition().getZ();
-      npk.speedX = (float) packet.getMotion().getX();
-      npk.speedY = (float) packet.getMotion().getY();
-      npk.speedZ = (float) packet.getMotion().getZ();
-        player.sendDataCraftsman(npk);
+/** v113 AddItemEntityPacket (item dropped on ground) → 0.15.x AddItemEntityPacket. */
+public class AddItemEntity implements BedrockPacketTranslator{
+  @Override
+  public void translate(BedrockPacket pk, Player player){
+    AddItemEntityPacket packet = (AddItemEntityPacket) pk;
+    org.CreadoresProgram.CraftsMine.network.protocol.AddItemEntityPacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.AddItemEntityPacket();
+    npk.eid = packet.getRuntimeEntityId();
+    com.nukkitx.protocol.bedrock.data.inventory.ItemData item = packet.getItemInHand();
+    if (item != null) {
+      npk.item = new Item(item.getId(), item.getDamage(), item.getCount(), new byte[0]);
+    } else {
+      npk.item = new Item(0, 0, 0, new byte[0]);
     }
+    Vector3f pos = packet.getPosition();
+    if (pos != null) {
+      npk.x = pos.getX();
+      npk.y = pos.getY();
+      npk.z = pos.getZ();
+    }
+    Vector3f mot = packet.getMotion();
+    if (mot != null) {
+      npk.speedX = mot.getX();
+      npk.speedY = mot.getY();
+      npk.speedZ = mot.getZ();
+    }
+    player.sendDataCraftsman(npk);
+  }
 }

@@ -1,38 +1,27 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.AnimatePacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.AnimatePacket;
+
+/**
+ * v113 AnimatePacket (Action enum, runtimeEntityId, rowingTime) → 0.15.x
+ * AnimatePacket (int action, long eid).
+ *
+ * <p>v113 Action enum ordinals align with 0.15.x action ints:
+ * NO_ACTION=0, SWING_ARM=1 (the most common - melee attack swing),
+ * WAKE_UP=2, CRITICAL_HIT=3, MAGIC_CRITICAL_HIT=4, ROW_RIGHT=5, ROW_LEFT=6.</p>
+ *
+ * <p>0.15.x has no rowingTime field; it is dropped.</p>
+ */
 public class Animate implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
-    org.cloudburstmc.protocol.bedrock.packet.AnimatePacket packet = (org.cloudburstmc.protocol.bedrock.packet.AnimatePacket) pk;
-    AnimatePacket npk = new AnimatePacket();
-    switch(packet.getAction()){
-      case NO_ACTION:
-        npk.action = 0;
-        break;
-      case SWING_ARM:
-        npk.action = 1;
-        break;
-      case WAKE_UP:
-        npk.action = 3;
-        break;
-      case CRITICAL_HIT:
-        npk.action = 4;
-        break;
-      case MAGIC_CRITICAL_HIT:
-        npk.action = 5;
-        break;
-      case ROW_RIGHT:
-        npk.action = 128;
-        break;
-      case ROW_LEFT:
-        npk.action = 129;
-        break;
-      default:
-        return;
-    }
+    AnimatePacket packet = (AnimatePacket) pk;
+    if (packet.getAction() == null) return;
+    org.CreadoresProgram.CraftsMine.network.protocol.AnimatePacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.AnimatePacket();
+    npk.action = packet.getAction().ordinal();
     npk.eid = packet.getRuntimeEntityId();
     player.sendDataCraftsman(npk);
   }

@@ -8,7 +8,10 @@ public class CraftsMine{
     Thread.currentThread().setName("CraftsMine-main");
     System.out.println("Starting CraftsMine Proxy Software Prototype");
     System.setProperty("java.compiler", "javac");
-    System.getProperties().putIfAbsent("io.netty.allocator.type", "unpooled");
+    // Use Netty's default pooled allocator. The previous code forced
+    // io.netty.allocator.type=unpooled which made every ByteBuf a fresh
+    // heap allocation, multiplying GC pressure under bursty packet traffic.
+    // PooledAllocator + ignore the property entirely is the right default.
     System.out.println("CraftsMine is distributed under the Terms and Conditions of Creadores Program ©2024");
     System.out.println("Read the Terms and Conditions at: https://creadoresprogram.blogspot.com/p/craftsmine.html");
     Item.init();

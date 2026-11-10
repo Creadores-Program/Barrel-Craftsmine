@@ -113,8 +113,12 @@ public class RaknetInterfaz implements ServerInstance{
   public void closeSession(String identifier, String reason){
     if(this.server.getBedrockPlayers().containsKey(identifier)){
       Player player = this.server.getBedrockPlayers().get(identifier);
+      String name = player.getCraftsmanUsername();
+      if(name == null || name.isEmpty()){
+        name = "Unknown";
+      }
       player.disconnect(reason);
-      this.server.getLogger().info(this.server.getBedrockPlayers().get(identifier).getCraftsmanUsername()+" Left the proxy.");
+      this.server.getLogger().info(name + " Left the proxy.");
       this.server.getBedrockPlayers().remove(identifier);
     }
     this.setMOTD(this.motd, this.submotd);

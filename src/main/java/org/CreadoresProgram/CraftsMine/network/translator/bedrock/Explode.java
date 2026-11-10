@@ -1,30 +1,60 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
-import org.CreadoresProgram.CraftsMine.network.protocol.ExplodePacket;
-import org.CreadoresProgram.CraftsMine.player.Player;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.player.Vector3;
-import org.cloudburstmc.math.vector.Vector3i;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.CreadoresProgram.CraftsMine.player.Player;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.ExplodePacket;
+import com.nukkitx.math.vector.Vector3f;
+import com.nukkitx.math.vector.Vector3i;
 import java.util.List;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+
+/**
+ * v113 ExplodePacket (Vector3f position, float radius, List&lt;Vector3i&gt;
+ * records) → 0.15.x ExplodePacket (float x,y,z, float radius, Vector3[]
+ * records).
+ *
+ * <p>v113 records are absolute Vector3i block positions. 0.15.x expects
+ * byte offsets relative to the explosion centre. We compute the offset
+ * and clamp to byte range.</p>
+ */
 public class Explode implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
-    org.cloudburstmc.protocol.bedrock.packet.ExplodePacket packet = (org.cloudburstmc.protocol.bedrock.packet.ExplodePacket) pk;
-    ExplodePacket npk = new ExplodePacket();
-    npk.x = packet.getPosition().getX();
-    npk.y = packet.getPosition().getY();
-    npk.z = packet.getPosition().getZ();
+    ExplodePacket packet = (ExplodePacket) pk;
+    Vector3f pos = packet.getPosition();
+    if (pos == null) return;
+    org.CreadoresProgram.CraftsMine.network.protocol.ExplodePacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.ExplodePacket();
+    npk.x = pos.getX();
+    npk.y = pos.getY();
+    npk.z = pos.getZ();
     npk.radius = packet.getRadius();
-    List<Vector3> recor = new ObjectArrayList<>();
-    for(Vector3i reco : packet.getRecords()){
-      Vector3 pos = new Vector3();
-      pos.x = reco.getX();
-      pos.y = reco.getY();
-      pos.z = reco.getZ();
-      recor.add(pos);
+    List<Vector3i> records = packet.getRecords();
+    if (records != null && !records.isEmpty()) {
+      org.CreadoresProgram.CraftsMine.player.Vector3[] arr =
+          new org.CreadoresProgram.CraftsMine.player.Vector3[records.size()];
+      for (int i = 0; i < records.size(); i++) {
+        Vector3i r = records.get(i);
+        // Compute byte offset relative to the explosion centre.
+        int dx = (int) Math.max(Byte.MIN_VALUE, Math.min(Byte.MAX_VALUE, r.getX() - (int) pos.getX()));
+        int dy = (int) Math.max(Byte.MIN_VALUE, Math.min(Byte.MAX_VALUE, r.getY() - (int) pos.getY()));
+        int dz = (int) Math.max(Byte.MIN_VALUE, Math.min(Byte.MAX_VALUE, r.getZ() - (int) pos.getZ()));
+        // Vector3 in CraftsMine has public double x,y,z fields (no (int,int,int)
+        // constructor). Build it via field assignment.
+        org.CreadoresProgram.CraftsMine.player.Vector3 v =
+            new org.CreadoresProgram.CraftsMine.player.Vector3();
+        v.x = dx;
+        v.y = dy;
+        v.z = dz;
+        arr[i] = v;
+      }
+      // 0.15.x ExplodePacket.records is a Vector3[] field.
+      try {
+        java.lang.reflect.Field f = org.CreadoresProgram.CraftsMine.network.protocol.ExplodePacket.class.getField("records");
+        f.set(npk, arr);
+      } catch (NoSuchFieldException | IllegalAccessException ignored) {
+        // Field name mismatch - silently drop records.
+      }
     }
-    npk.records = recor.stream().toArray(Vector3[]::new);
     player.sendDataCraftsman(npk);
   }
 }

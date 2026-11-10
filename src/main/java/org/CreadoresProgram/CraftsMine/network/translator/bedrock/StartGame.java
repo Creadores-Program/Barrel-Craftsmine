@@ -1,83 +1,80 @@
 package org.CreadoresProgram.CraftsMine.network.translator.bedrock;
 import org.CreadoresProgram.CraftsMine.network.translator.interfaces.BedrockPacketTranslator;
-import org.CreadoresProgram.CraftsMine.network.protocol.StartGamePacket;
 import org.CreadoresProgram.CraftsMine.player.Player;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
-import org.CreadoresProgram.CraftsMine.network.translator.ReloadAuthP;
-import org.cloudburstmc.protocol.bedrock.data.AuthoritativeMovementMode;
-import java.util.concurrent.TimeUnit;
-import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry;
-import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
-import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
+import com.nukkitx.protocol.bedrock.BedrockPacket;
+import com.nukkitx.protocol.bedrock.packet.StartGamePacket;
+import com.nukkitx.protocol.bedrock.data.GameType;
+import com.nukkitx.math.vector.Vector3f;
+import com.nukkitx.math.vector.Vector3i;
 
+/**
+ * Translates a v113 StartGamePacket from the MCPE 1.1 server into the
+ * simpler 0.15.x StartGamePacket format and forwards it to the upstream
+ * client so the player spawns into the world.
+ *
+ * <p>v113 StartGamePacket fields mapped to 0.15.x:</p>
+ * <ul>
+ *   <li>{@code seed} → {@code seed}</li>
+ *   <li>{@code dimension.ordinal()} → {@code dimension} (byte)</li>
+ *   <li>{@code generator.ordinal()} → {@code generator} (int)</li>
+ *   <li>{@code worldGameType.ordinal()} → {@code gamemode} (int)</li>
+ *   <li>{@code runtimeEntityId} → {@code eid} (long)</li>
+ *   <li>{@code spawnPosition} → {@code spawnX/Y/Z} (int)</li>
+ *   <li>{@code playerPosition} → {@code x/y/z} (float; 0.15.x y is feet, v113 y is eye +1.62)</li>
+ *   <li>{@code achievementsDisabled} → {@code b1}</li>
+ *   <li>{@code eduMode} → {@code b2}</li>
+ *   <li>{@code commandsEnabled} → {@code b3}</li>
+ *   <li>{@code levelId} (or worldName) → {@code unknownstr}</li>
+ * </ul>
+ *
+ * <p>Fields present in v113 but with no 0.15.x equivalent (dayCycleStopTime,
+ * rainLevel, lightningLevel, game rules, currentTick) are dropped — the
+ * 0.15.x client will use defaults.</p>
+ */
 public class StartGame implements BedrockPacketTranslator{
   @Override
-  public boolean immediate() {
-    return true;
-  }
+  public boolean immediate(){ return true; }
   @Override
   public void translate(BedrockPacket pk, Player player){
-    org.cloudburstmc.protocol.bedrock.packet.StartGamePacket packet = (org.cloudburstmc.protocol.bedrock.packet.StartGamePacket) pk;
-    StartGamePacket npk = new StartGamePacket();
-    npk.seed = Math.toIntExact(packet.getSeed());
-    npk.generator = packet.getGeneratorId();
-    npk.eid = packet.getRuntimeEntityId();
+    StartGamePacket packet = (StartGamePacket) pk;
+    // Save runtime entity id on the Player so subsequent packets can use it
+    // when constructing MovePlayerC etc. The 0.15.x client eid == v113
+    // runtime entity id (both are server-assigned longs).
     player.setRuntimeEntityId(packet.getRuntimeEntityId());
-    int spawnX = (int) packet.getDefaultSpawn().getX();
-    int spawnY = (int) packet.getDefaultSpawn().getY();
-    int spawnZ = (int) packet.getDefaultSpawn().getZ();
-    npk.spawnX = spawnX;
-    npk.spawnY = spawnY;
-    npk.spawnZ = spawnZ;
-    npk.x = packet.getPlayerPosition().getX();
-    npk.y = packet.getPlayerPosition().getY();
-    npk.z = packet.getPlayerPosition().getZ();
-    switch(packet.getPlayerGameType()){
-      case SURVIVAL:
-      case DEFAULT:
-        npk.gamemode = 0 & 0b11 & 0x01;
-        break;
-      case CREATIVE:
-        npk.gamemode = 1 & 0b11 & 0x01;
-        break;
-      case ADVENTURE:
-        npk.gamemode = 2 & 0b11 & 0x01;
-        break;
-      case SURVIVAL_VIEWER:
-        npk.gamemode = 3 & 0b11 & 0x01;
-        break;
-      case CREATIVE_VIEWER:
-        npk.gamemode = 4 & 0b11 & 0x01;
-        break;
+    player.setGamemode(packet.getWorldGameType() == null ? 0 : packet.getWorldGameType().ordinal());
+
+    org.CreadoresProgram.CraftsMine.network.protocol.StartGamePacket npk =
+        new org.CreadoresProgram.CraftsMine.network.protocol.StartGamePacket();
+    npk.seed = (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, packet.getSeed()));
+    npk.dimension = packet.getDimension() == null ? 0 : (byte) packet.getDimension().ordinal();
+    npk.generator = packet.getGenerator() == null ? 1 : packet.getGenerator().ordinal();
+    GameType gt = packet.getWorldGameType();
+    npk.gamemode = gt == null ? 0 : gt.ordinal();
+    npk.eid = packet.getRuntimeEntityId();
+
+    Vector3i spawn = packet.getSpawnPosition();
+    if (spawn != null) {
+      npk.spawnX = spawn.getX();
+      npk.spawnY = spawn.getY();
+      npk.spawnZ = spawn.getZ();
     }
-    npk.b1 = true;
-    npk.b2 = true;
-    npk.b3 = false;
-    npk.unknownstr = "";
-    if(packet.getDimensionId() == 2){
-      npk.dimension = 1 & 0xFF;
-    }else{
-      byte dimention = (byte) packet.getDimensionId();
-      byte subdimension = (byte) (dimention & 0xFF);
-      npk.dimension = subdimension;
+
+    Vector3f pos = packet.getPlayerPosition();
+    if (pos != null) {
+      // 0.15.x StartGamePacket.encode() writes player x/y/z as floats.
+      // The 0.15.x client expects y to be the player's feet position.
+      // v113 sends eye position; subtract 1.62 to get feet (matches the
+      // 0.15.x StartGamePacket.decode() convention in Barrel-Craftsmine).
+      npk.x = pos.getX();
+      npk.y = pos.getY() - 1.62f;
+      npk.z = pos.getZ();
     }
-    SimpleDefinitionRegistry<ItemDefinition> itemDefinitions = SimpleDefinitionRegistry.<ItemDefinition>builder()
-                .addAll(packet.getItemDefinitions())
-                .add(new SimpleItemDefinition("minecraft:empty", 0, false))
-                .build();
-    player.getBedrockClientSession().getPeer().getCodecHelper().setItemDefinitions(itemDefinitions);
-    if(packet.getAuthoritativeMovementMode() == AuthoritativeMovementMode.SERVER){
-      player.setPlayerInputAuth(true);
-      player.setTikPia(packet.getCurrentTick());
-      player.getPlayerInputExecutor().scheduleAtFixedRate(new Runnable(){
-        @Override
-        public void run(){
-          player.setTikPia(player.getTikPia() + 1);
-          ReloadAuthP auht = new ReloadAuthP(player);
-        }
-      }, 0, 50, TimeUnit.MILLISECONDS);
-    }
+
+    npk.b1 = packet.isAchievementsDisabled();
+    npk.b2 = packet.isEduMode();
+    npk.b3 = packet.isCommandsEnabled();
+    npk.unknownstr = packet.getLevelId() != null ? packet.getLevelId() : "";
+
     player.sendDataCraftsman(npk);
-    player.getUniquesEntitysIds().put(packet.getUniqueEntityId(), packet.getRuntimeEntityId());
   }
 }

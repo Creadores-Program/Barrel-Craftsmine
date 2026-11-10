@@ -95,10 +95,20 @@ public class LoginPacket extends MCDPacket {
     }
     private void decodeSkinData(){
         JSONObject skinToken = decodeToken(new String(this.get(this.getLInt())));
+        if(skinToken == null) return;
         if(skinToken.containsKey("ClientRandomId")) this.clientId = skinToken.getLong("ClientRandomId");
         if(skinToken.containsKey("ServerAddress")) this.serverAddress = skinToken.getString("ServerAddress");
         if(skinToken.containsKey("SkinId")) this.skinId = skinToken.getString("SkinId");
-        if(skinToken.containsKey("SkinData")) this.skin = new Skin(skinToken.getString("SkinData"), skinId);
+        if(skinToken.containsKey("SkinData")){
+            // Defensive: Skin constructor validates byte length (SINGLE_SKIN_SIZE
+            // or DOUBLE_SKIN_SIZE); any other size throws IllegalArgumentException
+            // which would abort decode() and leave username/UUID unset.
+            try{
+                this.skin = new Skin(skinToken.getString("SkinData"), skinId);
+            }catch(IllegalArgumentException ex){
+                this.skin = new Skin(new byte[Skin.SINGLE_SKIN_SIZE]);
+            }
+        }
     }
     private JSONObject decodeToken(String token){
         String[] base = token.split("\\.");
