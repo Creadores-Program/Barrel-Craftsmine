@@ -41,7 +41,19 @@ public class PlayerList implements BedrockPacketTranslator{
       org.CreadoresProgram.CraftsMine.network.protocol.PlayerListPacket.Entry entry =
           buildEntry(e.getUuid(), e.getEntityId(),
               e.getName() == null ? "" : e.getName(),
-              new org.CreadoresProgram.CraftsMine.nukkitLib.entity.data.Skin(new byte[0]));
+              // CRITICAL: Skin.setData() throws IllegalArgumentException
+              // ("Invalid skin") if the byte[] length is not exactly
+              // SINGLE_SKIN_SIZE (8192) or DOUBLE_SKIN_SIZE (16384).
+              // Passing new byte[0] crashes the translator thread with:
+              //   Skin.setData(Skin.java:140) -> Skin.<init>(Skin.java:54)
+              //   -> Skin.<init>(Skin.java:30) -> PlayerList.translate(PlayerList.java:43)
+              // Use an all-zero 8192-byte array (64x32 RGBA transparent
+              // skin) which the 0.15.x client renders as the default
+              // Steve/Alex skin. v113's PlayerListPacket does not carry
+              // skin data (skins are sent separately via PlayerSkinPacket
+              // in newer protocols, which v113 doesn't have).
+              new org.CreadoresProgram.CraftsMine.nukkitLib.entity.data.Skin(
+                  new byte[org.CreadoresProgram.CraftsMine.nukkitLib.entity.data.Skin.SINGLE_SKIN_SIZE]));
       if (entry == null) continue;
       arr[i] = entry;
     }
