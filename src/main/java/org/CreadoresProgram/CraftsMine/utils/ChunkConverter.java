@@ -242,10 +242,14 @@ public class ChunkConverter {
      * Converts a subchunk-format chunk blob to legacy column-ordered format.
      *
      * @param data the raw chunk blob from FullChunkDataPacket.getData()
+     * @param blockMapper the runtime-id → (legacyId, meta) mapper built from
+     *     the StartGamePacket block palette. Used to resolve RUNTIME palette
+     *     entries (the most common case for v113 servers). May be null, in
+     *     which case runtime palette entries resolve to air (legacy id 0).
      * @return legacy blob of LEGACY_BLOB_SIZE bytes + any trailing block NBT,
      *         or null if the blob could not be parsed
      */
-    public static byte[] convertToLegacy(byte[] data) {
+    public static byte[] convertToLegacy(byte[] data, org.CreadoresProgram.CraftsMine.utils.BlockMapper blockMapper) {
         if (data == null || data.length == 0) return null;
         // Only chunk version 1 (subchunk format) needs conversion.
         // Version 0 or no-version (legacy) is forwarded verbatim by the caller.
@@ -253,7 +257,7 @@ public class ChunkConverter {
 
         ByteBuf buf = Unpooled.wrappedBuffer(data);
         try {
-            return parseSubchunkFormat(buf);
+            return parseSubchunkFormat(buf, blockMapper);
         } catch (Throwable t) {
             return null;
         } finally {
@@ -261,7 +265,7 @@ public class ChunkConverter {
         }
     }
 
-    private static byte[] parseSubchunkFormat(ByteBuf buf) {
+    private static byte[] parseSubchunkFormat(ByteBuf buf, org.CreadoresProgram.CraftsMine.utils.BlockMapper blockMapper) {
         byte chunkVersion = buf.readByte(); // 1
         // For v113/Bedrock 1.1, subchunkCount should be read as VarInt.
         // But some servers send chunkVersion 1 with a different subchunk layout.
@@ -283,14 +287,23 @@ public class ChunkConverter {
         for (int sc = 0; sc < subchunksToRead; sc++) {
             byte subchunkVersion = buf.readByte();
             int storageCount;
-            if (subchunkVersion < 8) {
-                // Old format: paletteCount is the first byte
-                storageCount = subchunkVersion; // wait no, subchunkVersion IS the version, not the count
-                // Actually for version < 8, the next byte is the palette/storage count
+            // Subchunk version handling (matches Bedrock 1.2+ spec):
+            //   version 0: legacy single-storage (no storageCount byte)
+            //   version 1: storageSize = 1 implicit (NO storageCount byte)
+            //   version 8: storageSize = next byte
+            //   version 9: storageSize = next byte, then height byte
+            if (subchunkVersion == 0 || subchunkVersion == 1) {
+                storageCount = 1;
+            } else if (subchunkVersion == 8 || subchunkVersion == 9) {
                 storageCount = buf.readByte() & 0xff;
+                if (subchunkVersion == 9) {
+                    // height byte follows storageSize - we don't use it
+                    // (world Y offset is implicit in the section index).
+                    if (buf.isReadable()) buf.readByte();
+                }
             } else {
-                // Version 8+: storage count is the first byte
-                storageCount = buf.readByte() & 0xff;
+                // Unknown subchunk version - bail on this subchunk (air).
+                storageCount = 0;
             }
 
             // We only care about the first storage (layer 0 = solid blocks).
@@ -299,32 +312,85 @@ public class ChunkConverter {
             for (int storage = 0; storage < storageCount; storage++) {
                 byte flags = buf.readByte();
                 int bitsPerBlock = (flags & 0xff) >> 1;
-                boolean isPersistent = (flags & 1) != 0;
-                // Reuse flag for network/persistence
+                // CRITICAL FIX (BarrelMC reference): Bedrock's bit 0 of the
+                // paletteHeader flag is the IS_RUNTIME flag (1 = runtime
+                // palette with VarInt entries, 0 = persistent palette with
+                // NbtMap entries). The previous code inverted this flag and
+                // always read NbtMap entries, which only works if the
+                // server happens to send a persistent palette. Most v113+
+                // servers send runtime palettes, so the previous code tried
+                // to parse VarInt runtime IDs as NbtMap bytes and crashed.
+                boolean isRuntime = (flags & 1) == 1;
                 if (bitsPerBlock == 0) bitsPerBlock = 1;
 
-                if (isPersistent) {
-                    readVarInt(buf); // block count (ignored)
-                }
-
-                // Block data: 4096 entries packed into bitsPerBlock each.
-                int blockDataBytes = (SUBCHUNK_SIZE * bitsPerBlock + 7) / 8;
+                // CRITICAL FIX (BarrelMC reference): the bit-array is
+                // packed into 32-bit LITTLE-ENDIAN WORDS, NOT a flat byte
+                // stream. The byte count must be a multiple of 4 and is
+                // computed as:
+                //   blocksPerWord = floor(32 / bitsPerBlock)
+                //   wordsCount    = ceil(4096 / blocksPerWord)
+                //   wordBytes     = wordsCount * 4
+                // The previous code computed (4096 * bitsPerBlock + 7) / 8
+                // which is correct only for bitsPerBlock that divide 32
+                // evenly (1, 2, 4, 8, 16). For 3, 5, 6, 7 it under-reads,
+                // leaving the buffer misaligned for the palette and
+                // producing corrupted block indices.
+                int blocksPerWord = Integer.divideUnsigned(32, bitsPerBlock);
+                if (blocksPerWord <= 0) blocksPerWord = 1;
+                int wordsCount = (SUBCHUNK_SIZE + blocksPerWord - 1) / blocksPerWord;
+                int blockDataBytes = wordsCount * 4;
                 byte[] blockData = new byte[blockDataBytes];
                 buf.readBytes(blockData);
 
-                // Palette
+                // Decode the LE 32-bit words once - readBits will index
+                // into this words[] array instead of walking bytes.
+                int[] words = new int[wordsCount];
+                for (int w = 0; w < wordsCount; w++) {
+                    int off = w * 4;
+                    if (off + 4 <= blockData.length) {
+                        words[w] = ((blockData[off] & 0xff))
+                                 | ((blockData[off + 1] & 0xff) << 8)
+                                 | ((blockData[off + 2] & 0xff) << 16)
+                                 | ((blockData[off + 3] & 0xff) << 24);
+                    }
+                }
+
+                // Palette: runtime (VarInt entries) vs persistent (NbtMap).
                 int paletteSize = readVarInt(buf);
                 int[] paletteIds = new int[paletteSize];
-                for (int p = 0; p < paletteSize; p++) {
-                    NbtMap state = readNbtMap(buf);
-                    paletteIds[p] = blockStateToId(state);
+                if (isRuntime) {
+                    // Runtime palette: each entry is a VarInt32 runtime
+                    // block id pre-resolved against the server's block
+                    // palette. Resolve to legacy id via BlockMapper.
+                    for (int p = 0; p < paletteSize; p++) {
+                        int runtimeId = readVarInt(buf);
+                        if (blockMapper != null) {
+                            paletteIds[p] = blockMapper.getLegacyId(runtimeId);
+                        } else {
+                            // No mapper available - leave as 0 (air).
+                            paletteIds[p] = 0;
+                        }
+                    }
+                } else {
+                    // Persistent palette: each entry is a block-state
+                    // NbtMap encoded with the LE network NBT reader.
+                    // Resolve via the hardcoded NAME_TO_ID map.
+                    for (int p = 0; p < paletteSize; p++) {
+                        NbtMap state = readNbtMap(buf);
+                        paletteIds[p] = blockStateToId(state);
+                    }
                 }
 
                 if (storage == 0) {
                     // Extract the 4096 block IDs for this subchunk.
                     blockIdsForSubchunk = new int[SUBCHUNK_SIZE][];
                     for (int idx = 0; idx < SUBCHUNK_SIZE; idx++) {
-                        int paletteIndex = readBits(blockData, idx * bitsPerBlock, bitsPerBlock);
+                        // CRITICAL FIX (BarrelMC reference): index the
+                        // bit-array via word-aligned access, NOT a flat
+                        // bit offset. Each word holds blocksPerWord block
+                        // indices; the index inside the word is computed
+                        // from (idx % blocksPerWord) * bitsPerBlock.
+                        int paletteIndex = readBits(words, idx, bitsPerBlock, blocksPerWord);
                         if (paletteIndex >= paletteSize) paletteIndex = 0;
                         blockIdsForSubchunk[idx] = new int[]{ paletteIds[paletteIndex] };
                     }
@@ -467,24 +533,36 @@ public class ChunkConverter {
         return FALLBACK_ID;
     }
 
-    /** Reads `bits` bits from `data` starting at bit offset `bitOffset`. */
-    private static int readBits(byte[] data, int bitOffset, int bits) {
-        int byteOffset = bitOffset / 8;
-        int bitInByte = bitOffset % 8;
-        if (byteOffset >= data.length) return 0;
-        int value = 0;
-        int bitsRead = 0;
-        while (bitsRead < bits) {
-            if (byteOffset >= data.length) break;
-            int available = 8 - bitInByte;
-            int toRead = Math.min(available, bits - bitsRead);
-            int mask = (1 << toRead) - 1;
-            int b = (data[byteOffset] >> bitInByte) & mask;
-            value |= b << bitsRead;
-            bitsRead += toRead;
-            byteOffset++;
-            bitInByte = 0;
-        }
-        return value;
+    /**
+     * Reads the palette index for a single block from the packed bit-array.
+     *
+     * <p>Implements the Bedrock 1.2+ subchunk bit-array read per the
+     * BarrelMC reference algorithm:</p>
+     * <pre>
+     *   wordIndex = blockIndex / blocksPerWord
+     *   bitOffset = (blockIndex % blocksPerWord) * bitsPerBlock
+     *   word      = words[wordIndex]   // already endian-swapped from LE bytes
+     *   mask      = (1 &lt;&lt; bitsPerBlock) - 1
+     *   paletteIndex = (word &gt;&gt;&gt; bitOffset) &amp; mask
+     * </pre>
+     *
+     * <p>The previous byte-by-byte implementation was incorrect for
+     * bitsPerBlock values that do not divide 32 evenly (3, 5, 6, 7) because
+     * Bedrock pads each 32-bit word with unused trailing bits, while the
+     * byte-by-byte walk treated the bit-array as a flat bitstream.</p>
+     *
+     * @param words the 4096-block bit-array, already decoded from the LE
+     *   wire bytes into 32-bit ints
+     * @param blockIndex the block index in [0, 4096)
+     * @param bitsPerBlock bits per block index
+     * @param blocksPerWord floor(32 / bitsPerBlock)
+     */
+    private static int readBits(int[] words, int blockIndex, int bitsPerBlock, int blocksPerWord) {
+        if (blocksPerWord <= 0) blocksPerWord = 1;
+        int wordIndex = blockIndex / blocksPerWord;
+        if (wordIndex < 0 || wordIndex >= words.length) return 0;
+        int bitOffset = (blockIndex % blocksPerWord) * bitsPerBlock;
+        int mask = (1 << bitsPerBlock) - 1;
+        return (words[wordIndex] >>> bitOffset) & mask;
     }
 }

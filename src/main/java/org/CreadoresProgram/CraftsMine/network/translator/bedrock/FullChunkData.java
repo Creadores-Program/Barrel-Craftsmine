@@ -65,7 +65,11 @@ public class FullChunkData implements BedrockPacketTranslator{
     // The 0.15.x client cannot process this format directly and crashes.
     // Convert it to the legacy column-ordered format using ChunkConverter.
     if (blobSize > 0 && data[0] == 1) {
-      byte[] converted = org.CreadoresProgram.CraftsMine.utils.ChunkConverter.convertToLegacy(data);
+      // Pass the player's BlockMapper so ChunkConverter can resolve
+      // RUNTIME palette entries (bit 0 of paletteHeader = 1) to legacy
+      // block IDs via the StartGamePacket block palette.
+      byte[] converted = org.CreadoresProgram.CraftsMine.utils.ChunkConverter.convertToLegacy(
+          data, player.getBlockMapper());
       if (converted != null) {
         if (player.getTikPia() < 5) {
           org.CreadoresProgram.CraftsMine.server.Server.getInstance().getLogger().info(
