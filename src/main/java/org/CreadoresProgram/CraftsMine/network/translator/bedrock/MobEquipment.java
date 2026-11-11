@@ -26,10 +26,22 @@ public class MobEquipment implements BedrockPacketTranslator{
     } else {
       npk.item = new Item(0, 0, 0, new byte[0]);
     }
-    // 0.15.x wire: putLong(eid) + putSlot(item) + putByte(slot) + putByte(selectedSlot).
-    // v113 has inventorySlot and hotbarSlot. Map slot=hotbarSlot, selectedSlot=hotbarSlot
-    // (the displayed hotbar slot).
-    npk.slot = packet.getHotbarSlot();
+    // 0.15.x wire format (per Nukkit-Retro MobEquipmentPacket encode for
+    // protocol < 1.6.0): putLong(eid) + putSlot(item) + putByte(slot)
+    // + putByte(selectedSlot). The 0.15.x `slot` field is the inventory
+    // slot the item occupies; `selectedSlot` is the hotbar slot that is
+    // currently highlighted on the client.
+    //
+    // v113 MobEquipmentPacket fields (per NukkitX v113 source):
+    //   - inventorySlot: where the item lives in the inventory
+    //   - hotbarSlot: which hotbar slot is currently selected
+    //
+    // The previous translator set BOTH 0.15.x fields to hotbarSlot, which
+    // desynced the client's inventory slot tracking: when the player
+    // switched hotbar slots the client thought the item moved to a
+    // different inventory slot, eventually triggering slot-mismatch
+    // crashes when the player tried to use/equip the item.
+    npk.slot = packet.getInventorySlot();
     npk.selectedSlot = packet.getHotbarSlot();
     player.sendDataCraftsman(npk);
   }

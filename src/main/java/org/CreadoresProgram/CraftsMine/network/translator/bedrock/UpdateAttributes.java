@@ -15,7 +15,20 @@ import org.CreadoresProgram.CraftsMine.nukkitLib.entity.Attribute;
  * The 0.15.x wire format is `count short + per attr: float(min), float(max),
  * float(value), String(name)` (note name is LAST).</p>
  *
- * <p>v113 AttributeData.defaultValue is dropped (no 0.15.x equivalent).</p>
+ * <p>v113 AttributeData.defaultValue is dropped (no 0.15.x equivalent in
+ * the wire format; we still pass it to the Attribute constructor because
+ * the proxy's Attribute class uses it to initialise currentValue before
+ * setValue is called).</p>
+ *
+ * <p>CRITICAL: the proxy's {@code Attribute.setValue(float)} (single-arg
+ * overload) throws {@code IllegalArgumentException("Value X exceeds the
+ * range!")}$ when value is outside [min, max]. The v113 downstream server
+ * routinely sends out-of-range current values for players with absorption
+ * (health > max_health), modifier-buffed movement speed, or hunger
+ * saturation > 20 from plugins. The crash previously surfaced as
+ * "Datapacket translate error (UpdateAttributesPacket)" with the player
+ * getting disconnected. The fix uses {@code setValue(value, true)} which
+ * clamps the value to [min, max] instead of throwing.</p>
  */
 public class UpdateAttributes implements BedrockPacketTranslator{
   @Override
@@ -31,32 +44,33 @@ public class UpdateAttributes implements BedrockPacketTranslator{
     for (int i = 0; i < attrs.size(); i++) {
       AttributeData ad = attrs.get(i);
       // Attribute constructor: (int id, String name, float min, float max,
-      // float defaultValue, boolean shouldSend). Value is set via setValue().
-      // The id is a small int identifying which attribute (health=4, etc.);
-      // we use i as a placeholder since 0.15.x wire format doesn't actually
-      // serialise the id (it serialises name+min+max+value).
-      entries[i] = new org.CreadoresProgram.CraftsMine.nukkitLib.entity.Attribute(
+      // float defaultValue, boolean shouldSend). The id is never serialised
+      // on the 0.15.x wire (only name+min+max+value are), so a positional
+      // index `i` is a safe placeholder.
+      String name = ad.getName() == null ? "" : ad.getName();
+      Attribute attr = new org.CreadoresProgram.CraftsMine.nukkitLib.entity.Attribute(
           i,
-          ad.getName() == null ? "" : ad.getName(),
-          ad.getMinimum(), ad.getMaximum(), ad.getDefaultValue(),
-          true).setValue(ad.getValue());
+          name,
+          ad.getMinimum(),
+          ad.getMaximum(),
+          ad.getDefaultValue(),
+          true);
+      // CRITICAL: setValue(value, fit=true) clamps the value into [min, max]
+      // instead of throwing IllegalArgumentException. The v113 server can
+      // legitimately send values outside the legacy range (absorption
+      // health, plugin-applied modifiers, etc); the previous call to
+      // setValue(value) (single-arg, fit=false) crashed on every such
+      // packet, disconnecting the player whenever an attribute was out of
+      // range.
+      float clampedValue = Math.min(Math.max(ad.getValue(), ad.getMinimum()), ad.getMaximum());
+      attr.setValue(clampedValue, true);
+      entries[i] = attr;
     }
-    // 0.15.x UpdateAttributesPacket.entries is public Attribute[].
-    // Set via reflection-free direct field assignment if exposed; otherwise
-    // fall back to a manual approach. The 0.15.x packet's entries field is
-    // named `entries` in Barrel-Craftsmine's UpdateAttributesPacket.
-    try {
-      java.lang.reflect.Field f = org.CreadoresProgram.CraftsMine.network.protocol.UpdateAttributesPacket.class.getField("entries");
-      f.set(npk, entries);
-    } catch (NoSuchFieldException | IllegalAccessException e) {
-      // Field name mismatch: try alternative names.
-      try {
-        java.lang.reflect.Field f = org.CreadoresProgram.CraftsMine.network.protocol.UpdateAttributesPacket.class.getField("attributes");
-        f.set(npk, entries);
-      } catch (NoSuchFieldException | IllegalAccessException ignored) {
-        return;
-      }
-    }
+    // The proxy's UpdateAttributesPacket.entries field is `public
+    // Attribute[] entries;` (see UpdateAttributesPacket.java line 14).
+    // Direct field assignment replaces the previous fragile reflection
+    // lookup that probed both "entries" and "attributes" field names.
+    npk.entries = entries;
     player.sendDataCraftsman(npk);
   }
 }

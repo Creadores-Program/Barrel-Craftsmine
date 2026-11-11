@@ -23,6 +23,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.CreadoresProgram.CraftsMine.server.Server;
 import org.CreadoresProgram.CraftsMine.network.translator.PacketTranslatorManager;
+import org.CreadoresProgram.CraftsMine.network.util.UltimatePacketLogger;
 import org.CreadoresProgram.CraftsMine.options.Config;
 import org.CreadoresProgram.CraftsMine.network.BedrockBatchHandler;
 import org.CreadoresProgram.CraftsMine.utils.Utils;
@@ -398,6 +399,15 @@ public class Player extends Vector3{
     this.screenManager.sendTip(message);
   }
   public void sendDataCraftsman(MCDPacket pk){
+    // Ultimate debug: keep the last 5 packets per class (DisconnectPacket
+    // excluded inside the logger itself) so a post-crash snapshot can
+    // identify the most likely culprit. The record() call is O(1) and
+    // never throws (it guards against null and uses concurrent deques).
+    try {
+      UltimatePacketLogger.record(this.identifierCraftsMan, pk);
+    } catch (Throwable ignored) {
+      // The debug logger must NEVER break the actual packet send path.
+    }
     Server.getInstance().getRakNetServ().sendPacket(this.identifierCraftsMan, pk, false);
   }
   public void disconnect(String reason) {
@@ -432,5 +442,15 @@ public class Player extends Vector3{
       displayName = (this.identifierCraftsMan == null) ? "Unknown" : this.identifierCraftsMan;
     }
     Server.getInstance().getLogger().info(displayName + " disconnected: " + reason);
+    // Ultimate debug: dump the last 5 packets per class to disk and
+    // console. Called AFTER the RakNet-level DisconnectPacket has been
+    // queued so the snapshot reflects exactly what the client received
+    // before the crash. The logger itself excludes DisconnectPacket from
+    // the ring buffer, so the dump shows only the real suspect packets.
+    try {
+      UltimatePacketLogger.dumpSnapshot(this.identifierCraftsMan, displayName, reason);
+    } catch (Throwable ignored) {
+      // The dump is best-effort; never break disconnect cleanup.
+    }
   }
 }
