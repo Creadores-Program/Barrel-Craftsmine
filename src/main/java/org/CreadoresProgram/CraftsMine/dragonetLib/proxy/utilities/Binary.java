@@ -336,48 +336,96 @@ public class Binary {
     }
     public static byte[] writeMetadata(Map<Integer, Object[]> map){
         BinaryStream stream = new BinaryStream();
-        for (int id : map.keySet()) {
-            Object[] d = map.get(id);
-            int type = (int) d[0];
-            stream.putByte((byte) (((type << 5) | (id & 0x1F)) & 0xff)); //0 = getType
-            switch(type){
-                case 0:
-                    if(!(d[1] instanceof Byte)){
-                    stream.putByte(((Integer) d[1]).byteValue()); //1 = ByteEntityData.getData()
-                    }else{
-                        stream.putByte(((byte) d[1]));
-                    }
-                    break;
-                case 1:
-                    stream.putLShort(((Integer) ((Short) d[1]).intValue()));
-                    break;
-                case 2:
-                    stream.putLInt(((Integer) d[1]));
-                    break;
-                case 3:
-                    stream.putLFloat(((Float) d[1]));
-                    break;
-                case 4:
-                    stream.putLShort(((String) d[1]).getBytes(StandardCharsets.UTF_8).length);
-                    stream.put(((String) d[1]).getBytes(StandardCharsets.UTF_8));
-                    break;
-                case 5:
-                    Object[] slot = (Object[]) d[1];
-                    stream.putLShort((Integer) slot[0]); //blockid
-                    stream.putByte((byte) slot[1]); //meta
-                    stream.putLShort((Integer) slot[2]); //count
-                    break;
-                case 6:
-                    int[] pos = (int[]) d[1];
-                    stream.putLInt(pos[0]);
-                    stream.putLInt(pos[1]);
-                    stream.putLInt(pos[2]);
-                    break;
-                case 7:
-                    stream.putLLong(((Long) d[1]));
-                    break;
+        // CRITICAL FIX (ported from Nukkit-Retro writeLegacyMetadata):
+        // MCPE 0.15.x expects a FIXED set of default metadata entries to
+        // ALWAYS be present, even when the source metadata map is empty.
+        // Without these defaults the client uses uninitialized values for
+        // entity flags/air/nametag/etc., which can crash the client during
+        // entity rendering. The default entries are:
+        //   key 0  (BYTE):  DATA_FLAGS = 0 (no flags set)
+        //   key 1  (SHORT): DATA_AIR = 300 (full air supply)
+        //   key 2  (STRING): DATA_NAMETAG = "" (empty nametag)
+        //   key 3  (BYTE):  DATA_SHOW_NAMETAG = 0
+        //   key 4  (BYTE):  DATA_SILENT = 0
+        //   key 15 (BYTE):  DATA_NO_AI = 0
+        //   key 23 (LONG):  DATA_LEAD_HOLDER_EID = -1 (no lead)
+        //   key 24 (BYTE):  DATA_LEAD = 0 (not leashed)
+        // Entries from the input map override the defaults.
+        // Step 1: write the fixed defaults.
+        // key 0: BYTE type (0), flags=0
+        stream.putByte((byte) 0x00); // (0<<5)|(0&0x1f) = 0x00
+        stream.putByte((byte) 0);
+        // key 1: SHORT type (1), air=300
+        stream.putByte((byte) 0x21); // (1<<5)|(1&0x1f) = 0x21
+        stream.putLShort(300);
+        // key 2: STRING type (4), nametag=""
+        stream.putByte((byte) 0x82); // (4<<5)|(2&0x1f) = 0x82
+        stream.putLShort(0); // empty string length
+        // key 3: BYTE, show_nametag=0
+        stream.putByte((byte) 0x03); // (0<<5)|(3&0x1f) = 0x03
+        stream.putByte((byte) 0);
+        // key 4: BYTE, silent=0
+        stream.putByte((byte) 0x04);
+        stream.putByte((byte) 0);
+        // key 15: BYTE, no_ai=0
+        stream.putByte((byte) 0x0f); // (0<<5)|(15&0x1f) = 0x0f
+        stream.putByte((byte) 0);
+        // key 23: LONG type (7), lead_holder=-1
+        stream.putByte((byte) 0xf7); // (7<<5)|(23&0x1f) = 0xe0|0x17 = 0xf7
+        stream.putLLong(-1L);
+        // key 24: BYTE, lead=0
+        stream.putByte((byte) 0x18); // (0<<5)|(24&0x1f) = 0x18
+        stream.putByte((byte) 0);
+        // Step 2: write any additional entries from the input map that
+        // are NOT already in the default set (keys 0,1,2,3,4,15,23,24).
+        if (map != null) {
+            java.util.Set<Integer> defaultKeys = new java.util.HashSet<>(
+                java.util.Arrays.asList(0, 1, 2, 3, 4, 15, 23, 24));
+            for (int id : map.keySet()) {
+                if (defaultKeys.contains(id)) continue; // skip defaults
+                Object[] d = map.get(id);
+                int type = (int) d[0];
+                stream.putByte((byte) (((type << 5) | (id & 0x1F)) & 0xff));
+                switch(type){
+                    case 0:
+                        if(!(d[1] instanceof Byte)){
+                        stream.putByte(((Integer) d[1]).byteValue());
+                        }else{
+                            stream.putByte(((byte) d[1]));
+                        }
+                        break;
+                    case 1:
+                        stream.putLShort(((Integer) ((Short) d[1]).intValue()));
+                        break;
+                    case 2:
+                        stream.putLInt(((Integer) d[1]));
+                        break;
+                    case 3:
+                        stream.putLFloat(((Float) d[1]));
+                        break;
+                    case 4:
+                        stream.putLShort(((String) d[1]).getBytes(StandardCharsets.UTF_8).length);
+                        stream.put(((String) d[1]).getBytes(StandardCharsets.UTF_8));
+                        break;
+                    case 5:
+                        Object[] slot = (Object[]) d[1];
+                        stream.putLShort((Integer) slot[0]);
+                        stream.putByte((byte) slot[1]);
+                        stream.putLShort((Integer) slot[2]);
+                        break;
+                    case 6:
+                        int[] pos = (int[]) d[1];
+                        stream.putLInt(pos[0]);
+                        stream.putLInt(pos[1]);
+                        stream.putLInt(pos[2]);
+                        break;
+                    case 7:
+                        stream.putLLong(((Long) d[1]));
+                        break;
+                }
             }
         }
+        // Step 3: end marker
         stream.putByte((byte) 0x7f);
         return stream.getBuffer();
     }

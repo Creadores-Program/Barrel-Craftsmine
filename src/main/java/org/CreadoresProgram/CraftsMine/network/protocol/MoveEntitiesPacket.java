@@ -41,8 +41,8 @@ public class MoveEntitiesPacket extends MCDPacket {
         this.putFloat((float) this.y);
         this.putFloat((float) this.z);
         this.putByte((byte) (this.pitch / (360d / 256d)));
-        this.putByte((byte) (this.headYaw / (360d / 256d)));
         this.putByte((byte) (this.yaw / (360d / 256d)));
+        this.putByte((byte) (this.headYaw / (360d / 256d)));
     }
 
     @Override

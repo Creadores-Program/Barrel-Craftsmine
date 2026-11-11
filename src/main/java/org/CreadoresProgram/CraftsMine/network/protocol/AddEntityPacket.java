@@ -46,8 +46,8 @@ public class AddEntityPacket extends MCDPacket {
         this.putFloat(this.speedX);
         this.putFloat(this.speedY);
         this.putFloat(this.speedZ);
-        this.putFloat(this.yaw * 0.71f);
-        this.putFloat(this.pitch * 0.71f);
+        this.putFloat(this.yaw * 0.71111f);
+        this.putFloat(this.pitch * 0.71111f);
         this.putInt(modifiers);
         this.put(Binary.writeMetadata(this.metadata));
         this.putShort(this.links.length);
