@@ -44,14 +44,25 @@ public class BlockEntityData implements BedrockPacketTranslator{
     npk.y = pos.getY();
     npk.z = pos.getZ();
     try {
-      // Serialize the NbtMap in LITTLE-ENDIAN network NBT format
-      // (matching the v113 BedrockPacketHelper wire format and what
-      // the 0.15.x client expects). We use a Netty ByteBuf as the
-      // backing buffer because NbtUtils.createNetworkWriter expects
-      // an OutputStream and ByteBufOutputStream is the standard Netty
-      // adapter.
+      // Serialize the NbtMap in LITTLE-ENDIAN standard NBT format WITH
+      // root name (createWriterLE), NOT the network format (createNetworkWriter).
+      //
+      // CRITICAL FIX (verified against MySoft/PocketMine 0.15.x):
+      // MySoft Player.php line 4879:
+      //   $nbt = $this->getProtocol() >= ProtocolInfo::PROTOCOL_90
+      //       ? new NetworkLittleEndianNBTStream()   // 0.16+: NO root name
+      //       : new LittleEndianNBTStream();          // 0.15.x: WITH root name
+      //
+      // MCPE 0.15.x (protocol 81) expects block entity NBT in the
+      // STANDARD little-endian format that includes the root tag name
+      // (typically an empty string, encoded as short 0x0000 + 0 bytes).
+      // The v113 network format (createNetworkWriter) OMITS the root
+      // name entirely — the 0.15.x client would then misinterpret the
+      // first tag-type byte as the root-name length short, read garbage,
+      // and crash while parsing the block entity NBT during chunk
+      // rendering (chest, sign, hopper, etc.).
       ByteBuf buf = Unpooled.buffer();
-      try (NBTOutputStream writer = NbtUtils.createNetworkWriter(
+      try (NBTOutputStream writer = NbtUtils.createWriterLE(
               new ByteBufOutputStream(buf))) {
         writer.writeTag(data);
       }
