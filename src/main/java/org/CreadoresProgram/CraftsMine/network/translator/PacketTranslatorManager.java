@@ -71,7 +71,11 @@ public class PacketTranslatorManager {
     bedrockTranslators.put(LevelEventPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.LevelEventT());
     bedrockTranslators.put(AddEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.AddEntity());
     bedrockTranslators.put(MoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MoveEntityAbsolute());
-    bedrockTranslators.put(MoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.MoveEntityDelta());
+    // NOTE: MoveEntityDelta was previously registered here too for the same
+    // MoveEntityPacket.class key, which silently overwrote the
+    // MoveEntityAbsolute registration (HashMap.put replaces the value).
+    // Both translators were identical after the rotation fix; a single
+    // registration is kept.
     bedrockTranslators.put(EntityEventPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.EntityEvent());
     bedrockTranslators.put(RemoveEntityPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.RemoveEntity());
     bedrockTranslators.put(SetEntityLinkPacket.class, new org.CreadoresProgram.CraftsMine.network.translator.bedrock.SetEntityLink());
@@ -126,17 +130,48 @@ public class PacketTranslatorManager {
     CraftsmanPacketTranslator translator = craftsmanTranslators.get(pk.getClass());
     if(translator != null){
       ThreadPoolExecutor pool = Server.getInstance().getTranslationExecutor();
-      pool.execute(() -> translator.translate(pk, player));
+      pool.execute(() -> {
+        try {
+          translator.translate(pk, player);
+        } catch (Exception ex) {
+          Server.getInstance().getLogger().error("Datapacket translate error (" + pk.getClass().getSimpleName() + "): ", ex);
+        }
+      });
     }
   }
   public void translate(BedrockPacket pk){
     BedrockPacketTranslator translator = bedrockTranslators.get(pk.getClass());
     if(translator != null){
       if(translator.immediate()){
-        translator.translate(pk, player);
+        // immediate() is reserved for translators that do NOT send anything
+        // to the 0.15.x client (ServerToClientHandshake, ResourcePacksInfo,
+        // ResourcePackStack - they only respond to the downstream v113
+        // server). Running them inline on the Netty thread is safe for the
+        // client's packet ordering.
+        try {
+          translator.translate(pk, player);
+        } catch (Exception ex) {
+          Server.getInstance().getLogger().error("Datapacket translate error (" + pk.getClass().getSimpleName() + "): ", ex);
+        }
       }else{
-        ThreadPoolExecutor pool = Server.getInstance().getTranslationExecutor();
-        pool.execute(() -> translator.translate(pk, player));
+        // Client-facing packets MUST be translated in arrival order: the
+        // 0.15.x client crashes when it receives MoveEntity/MobEquipment
+        // for an entity whose AddEntity has not arrived yet, or
+        // BlockEntityData for a chunk whose FullChunkData is still queued.
+        // The shared multi-thread pool scrambled the stream; the
+        // per-player single-thread FIFO preserves the exact order the
+        // v113 server sent the packets in.
+        try {
+          player.getBedrockTranslateQueue().execute(() -> {
+            try {
+              translator.translate(pk, player);
+            } catch (Exception ex) {
+              Server.getInstance().getLogger().error("Datapacket translate error (" + pk.getClass().getSimpleName() + "): ", ex);
+            }
+          });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+          // Player already disconnected - drop the packet.
+        }
       }
     }
   }

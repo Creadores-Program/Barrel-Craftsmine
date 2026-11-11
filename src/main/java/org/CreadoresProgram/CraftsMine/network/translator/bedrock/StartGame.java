@@ -32,8 +32,10 @@ import com.nukkitx.math.vector.Vector3i;
  * 0.15.x client will use defaults.</p>
  */
 public class StartGame implements BedrockPacketTranslator{
-  @Override
-  public boolean immediate(){ return true; }
+  // immediate() removed: this translator sends packets to the 0.15.x
+  // client, so it MUST go through the per-player ordered FIFO to
+  // preserve packet ordering (inline execution on the Netty thread let
+  // it overtake earlier queued packets).
   @Override
   public void translate(BedrockPacket pk, Player player){
     StartGamePacket packet = (StartGamePacket) pk;

@@ -27,6 +27,12 @@ public class AddEntityPacket extends MCDPacket {
     public float yaw;
     public float pitch;
     public int modifiers;
+    /**
+     * Client protocol version (81 = 0.15.0-0.15.3, 82+ = 0.15.4+).
+     * Controls the rotation/modifiers layout - see encode(). Set by the
+     * AddEntity translator from Player.getProtocol(). Defaults to 84.
+     */
+    public int protocol = 84;
     public Map<Integer, Object[]> metadata;
     public final Object[][] links = new Object[0][3];
 
@@ -46,9 +52,22 @@ public class AddEntityPacket extends MCDPacket {
         this.putFloat(this.speedX);
         this.putFloat(this.speedY);
         this.putFloat(this.speedZ);
-        this.putFloat(this.yaw * 0.71111f);
-        this.putFloat(this.pitch * 0.71111f);
-        this.putInt(modifiers);
+        if (protocol >= 82) {
+            // 0.15.4+ (protocol 82/83/84): rotation in byte-angle units
+            // (yaw * 256/360) followed by a modifiers int.
+            // Verified: Nukkit-Retro AddEntityPacket, v0_15_4 branch.
+            this.putFloat(this.yaw * 0.71111f);
+            this.putFloat(this.pitch * 0.71111f);
+            this.putInt(modifiers);
+        } else {
+            // 0.15.0-0.15.3 (protocol 80/81): raw degree floats and NO
+            // modifiers int. Verified: PocketMine master-legacy
+            // AddEntityPacket::encode() (CURRENT_PROTOCOL = 81).
+            // Writing the 0.15.4+ layout here desynchronized the client's
+            // metadata parsing by 4 bytes and crashed it.
+            this.putFloat(this.yaw);
+            this.putFloat(this.pitch);
+        }
         this.put(Binary.writeMetadata(this.metadata));
         this.putShort(this.links.length);
         for (Object[] link : links) {

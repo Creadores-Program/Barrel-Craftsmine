@@ -58,6 +58,17 @@ public class LoginHPacket implements CraftsmanPacketTranslator{
       // Bind the client identity to the Player and open the downstream
       // BedrockClient session to the MCPE 1.1 server. This blocks up to
       // 10 seconds on the RakNet handshake.
+      // Save the client's real protocol version: several 0.15.x packets
+      // changed layout inside the family (AddEntityPacket gained the
+      // rotation scale + modifiers int in 0.15.4 / protocol 82), so the
+      // encoders must match the exact client version. Verified against
+      // Nukkit-Retro (v0_15_4 branch) and PocketMine master-legacy
+      // (CURRENT_PROTOCOL = 81, layout without modifiers).
+      int clientProtocol = packet.protocol;
+      if (clientProtocol < 80 || clientProtocol > 90) {
+        clientProtocol = 84; // fallback: the protocol the MOTD advertises
+      }
+      player.setProtocol(clientProtocol);
       player.onLogin(packet);
       // Player.getLoginPacket() builds a v113 LoginPacket with chainData +
       // clientData as AsciiString (the v113 wire format). Ship it.

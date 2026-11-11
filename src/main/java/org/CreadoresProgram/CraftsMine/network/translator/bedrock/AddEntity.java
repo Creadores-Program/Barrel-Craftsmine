@@ -127,6 +127,9 @@ public class AddEntity implements BedrockPacketTranslator{
       npk.pitch = rot.getX();
     }
     npk.modifiers = 0;
+    // Pick the AddEntity wire layout matching the client's protocol
+    // (0.15.0-0.15.3 = raw floats, 0.15.4+ = scaled + modifiers int).
+    npk.protocol = player.getProtocol();
     // metadata stays empty (with 0x7f end marker written by
     // Binary.writeMetadata) — entity spawns with default visual state.
     npk.metadata = new java.util.HashMap<>();

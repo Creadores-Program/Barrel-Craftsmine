@@ -43,8 +43,10 @@ import com.nukkitx.protocol.bedrock.packet.PlayStatusPacket;
  * during terrain construction or entity spawn.</p>
  */
 public class PlayStatus implements BedrockPacketTranslator{
-  @Override
-  public boolean immediate(){ return true; }
+  // immediate() removed: this translator sends packets to the 0.15.x
+  // client, so it MUST go through the per-player ordered FIFO to
+  // preserve packet ordering (inline execution on the Netty thread let
+  // it overtake earlier queued packets).
   @Override
   public void translate(BedrockPacket pk, Player player){
     PlayStatusPacket packet = (PlayStatusPacket) pk;

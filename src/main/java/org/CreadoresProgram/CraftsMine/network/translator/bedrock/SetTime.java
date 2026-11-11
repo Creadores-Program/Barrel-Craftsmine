@@ -11,7 +11,13 @@ public class SetTime implements BedrockPacketTranslator{
     SetTimePacket packet = (SetTimePacket) pk;
     org.CreadoresProgram.CraftsMine.network.protocol.SetTimePacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.SetTimePacket();
-    npk.time = packet.getTime();
+    // Normalize into the 0..23999 range the client expects (the field is
+    // documented as "time of the day 0..24000"; v113 servers can send
+    // negative values from plugins like /time set -6000 or raw doDaylightCycle
+    // offsets, which the legacy client does not clamp itself).
+    int time = packet.getTime() % 24000;
+    if (time < 0) time += 24000;
+    npk.time = time;
     npk.started = true;
     player.sendDataCraftsman(npk);
   }

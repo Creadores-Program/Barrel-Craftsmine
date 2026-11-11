@@ -6,8 +6,10 @@ import com.nukkitx.protocol.bedrock.packet.DisconnectPacket;
 
 /** v113 DisconnectPacket (String kickMessage) → 0.15.x DisconnectPacket (String message). */
 public class DisconnectPack implements BedrockPacketTranslator{
-  @Override
-  public boolean immediate(){ return true; }
+  // immediate() removed: this translator sends packets to the 0.15.x
+  // client, so it MUST go through the per-player ordered FIFO to
+  // preserve packet ordering (inline execution on the Netty thread let
+  // it overtake earlier queued packets).
   @Override
   public void translate(BedrockPacket pk, Player player){
     DisconnectPacket packet = (DisconnectPacket) pk;

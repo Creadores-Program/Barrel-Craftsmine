@@ -60,6 +60,41 @@ public class Player extends Vector3{
   @Getter
   private long clientID;
 
+  /**
+   * Protocol version advertised by the connected 0.15.x client in its
+   * LoginPacket (81 = 0.15.0-0.15.3, 82 = 0.15.4+, 84 = 0.15.10).
+   * Defaults to 84. Several 0.15.x packets changed layout between
+   * protocol 81 and 82 (AddEntityPacket gained the rotation scale +
+   * modifiers int in 0.15.4), so translators/encoders consult this to
+   * pick the correct wire format. See Nukkit-Retro AddEntityPacket
+   * (v0_15_4 branch) and PocketMine master-legacy (protocol 81).
+   */
+  @Getter
+  @Setter
+  private int protocol = 84;
+
+  /**
+   * Per-player SINGLE-THREADED ordered queue for downstream (v113 → 0.15.x)
+   * packet translations. The 0.15.x client has zero tolerance for packet
+   * reordering: MoveEntity for an entity whose AddEntity has not arrived
+   * yet crashes it, BlockEntityData for an unloaded chunk crashes it, etc.
+   * The previous design dispatched translations to a shared
+   * ThreadPoolExecutor with multiple threads, which scrambled the packet
+   * stream (verified cause of the recurring MoveEntitiesPacket /
+   * AddEntityPacket / MobEquipmentPacket / SetTimePacket /
+   * BlockEntityDataPacket client crashes). A per-player FIFO preserves
+   * arrival order for the client while still allowing different players
+   * to be translated in parallel.
+   */
+  @Getter
+  private final java.util.concurrent.ExecutorService bedrockTranslateQueue =
+      java.util.concurrent.Executors.newSingleThreadExecutor(
+          r -> {
+            Thread t = new Thread(r, "CraftsMine-translate-" + identifierCraftsMan);
+            t.setDaemon(true);
+            return t;
+          });
+
   @Getter
   @Setter
   private Item[] hotbar;
@@ -371,6 +406,10 @@ public class Player extends Vector3{
     // scheduler for the whole proxy (used by QueryTask and any other
     // periodic job) on the very first disconnect. Just cancel this player's
     // scheduled jobs (if any were registered) instead.
+    try {
+      this.bedrockTranslateQueue.shutdownNow();
+    } catch (Throwable ignored) {
+    }
     try {
       if (this.bedrockClientSession != null) this.bedrockClientSession.disconnect();
     } catch (Throwable ignored) {
