@@ -8,7 +8,8 @@ import com.nukkitx.math.vector.Vector3f;
 /**
  * Same v113 source as MoveEntityAbsolute - both v113 MoveEntityAbsolutePacket
  * and MoveEntityDeltaPacket were renamed by the migration script to
- * MoveEntityPacket. This stub forwards the same way as MoveEntityAbsolute.
+ * MoveEntityPacket. This translator forwards the same way as MoveEntityAbsolute,
+ * with the same rotation byte→degrees conversion.
  */
 public class MoveEntityDelta implements BedrockPacketTranslator{
   @Override
@@ -23,9 +24,14 @@ public class MoveEntityDelta implements BedrockPacketTranslator{
       npk.y = pos.getY();
       npk.z = pos.getZ();
     }
-    npk.pitch = packet.getPitch() & 0xFF;
-    npk.headYaw = packet.getHeadYaw() & 0xFF;
-    npk.yaw = packet.getYaw() & 0xFF;
+    // Same rotation conversion as MoveEntityAbsolute: v113 bytes are
+    // in 0..255 range, convert to degrees for the 0.15.x encode.
+    double pitchDeg = (packet.getPitch() & 0xFF) * (360.0 / 256.0);
+    double headYawDeg = (packet.getHeadYaw() & 0xFF) * (360.0 / 256.0);
+    double yawDeg = (packet.getYaw() & 0xFF) * (360.0 / 256.0);
+    npk.pitch = pitchDeg;
+    npk.headYaw = headYawDeg;
+    npk.yaw = yawDeg;
     player.sendDataCraftsman(npk);
   }
 }

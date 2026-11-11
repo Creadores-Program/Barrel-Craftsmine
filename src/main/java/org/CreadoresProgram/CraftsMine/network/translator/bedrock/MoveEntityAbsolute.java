@@ -10,8 +10,19 @@ import com.nukkitx.math.vector.Vector3f;
  * MoveEntitiesPacket (which serialises a single entity: eid + 3 floats +
  * 3 bytes for pitch/headYaw/yaw scaled to 0..255).
  *
- * <p>v113 rotation bytes: pitch, headYaw, yaw are already in 0..255 range
- * (degrees * 256/360 rounded). 0.15.x expects the same scale.</p>
+ * <p><b>Rotation conversion</b>: v113 sends pitch/headYaw/yaw as raw
+ * bytes in the 0..255 range (where 0=0° and 256=360°, the standard
+ * Bedrock rotation byte encoding). The 0.15.x MoveEntitiesPacket
+ * encode divides the stored double by {@code (360d/256d)} to convert
+ * from degrees back to the byte range. So we must convert the v113
+ * byte to DEGREES before assigning:</p>
+ * <pre>
+ *   degrees = v113Byte * (360.0 / 256.0)
+ * </pre>
+ * <p>This ensures the round-trip is lossless: v113 byte 128 → 180° →
+ * encode divides by 1.40625 → writes byte 128. Without this conversion
+ * the rotation would be compressed by an extra factor of ~1.4, making
+ * entities face the wrong direction.</p>
  */
 public class MoveEntityAbsolute implements BedrockPacketTranslator{
   @Override
@@ -26,9 +37,15 @@ public class MoveEntityAbsolute implements BedrockPacketTranslator{
       npk.y = pos.getY();
       npk.z = pos.getZ();
     }
-    npk.pitch = packet.getPitch() & 0xFF;
-    npk.headYaw = packet.getHeadYaw() & 0xFF;
-    npk.yaw = packet.getYaw() & 0xFF;
+    // v113 bytes are in 0..255 range (0=0°, 256=360°). Convert to
+    // degrees so the 0.15.x encode (which divides by 360/256) writes
+    // the correct byte back.
+    double pitchDeg = (packet.getPitch() & 0xFF) * (360.0 / 256.0);
+    double headYawDeg = (packet.getHeadYaw() & 0xFF) * (360.0 / 256.0);
+    double yawDeg = (packet.getYaw() & 0xFF) * (360.0 / 256.0);
+    npk.pitch = pitchDeg;
+    npk.headYaw = headYawDeg;
+    npk.yaw = yawDeg;
     player.sendDataCraftsman(npk);
   }
 }
