@@ -169,8 +169,21 @@ public class PacketTranslatorManager {
               Server.getInstance().getLogger().error("Datapacket translate error (" + pk.getClass().getSimpleName() + "): ", ex);
             }
           });
-        } catch (java.util.concurrent.RejectedExecutionException ignored) {
-          // Player already disconnected - drop the packet.
+        } catch (java.util.concurrent.RejectedExecutionException ex) {
+          // The per-player bedrockTranslateQueue has been shut down
+          // (Player.disconnect() calls shutdownNow()). This is reached
+          // when the v113 server keeps streaming packets after the
+          // client already disconnected (common during teardown).
+          // Previously silently ignored; now logged at info level so
+          // operators can correlate drops with disconnect timing in
+          // the proxy log. Without this log the symptom was a "stuck
+          // at Locating Server" client with no clue that packets
+          // were being dropped on the floor after a half-closed
+          // session.
+          Server.getInstance().getLogger().info(
+              "Translation queue rejected " + pk.getClass().getSimpleName()
+              + " for player " + player.getCraftsmanUsername()
+              + " (queue shut down - player is disconnecting)");
         }
       }
     }

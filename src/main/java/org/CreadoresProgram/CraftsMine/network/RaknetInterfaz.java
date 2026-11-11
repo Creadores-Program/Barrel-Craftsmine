@@ -13,8 +13,6 @@ import org.CreadoresProgram.CraftsMine.network.protocol.base.MCDPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.BatchPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.DisconnectPacket;
 import org.CreadoresProgram.CraftsMine.dragonetLib.proxy.utilities.Binary;
-import org.CreadoresProgram.CraftsMine.nukkitLib.utils.Zlib;
-import java.util.zip.Deflater;
 import org.CreadoresProgram.CraftsMine.network.protocol.Interface.Protocol;
 import org.CreadoresProgram.CraftsMine.nukkitLib.raknet.protocol.packet.PING_DataPacket;
 import org.CreadoresProgram.CraftsMine.network.protocol.UnknownPacket;
@@ -41,12 +39,6 @@ public class RaknetInterfaz implements ServerInstance{
 
   private final long serverId = ThreadLocalRandom.current().nextLong();
 
-  /**
-   * Packets whose encoded size is >= this threshold are wrapped in a
-   * compressed BatchPacket before sending (PocketMine master-legacy
-   * Network::$BATCH_THRESHOLD = 512). FullChunkData (~83KB) dominates.
-   */
-  private static final int BATCH_COMPRESS_THRESHOLD = 512;
   public RaknetInterfaz(Server server, String ip, int port){
     this.server = server;
     rakServer = new RakNetServer(this.server.getLogger(), port, ip);
@@ -200,31 +192,6 @@ public class RaknetInterfaz implements ServerInstance{
   public void disconnect(String identifier, String reason){
     handler.closeSession(identifier, reason);
   }
-  /**
-   * Wraps an encoded 0.15.x packet in a compressed BatchPacket, matching
-   * the format PocketMine (master-legacy) uses for packets >= BATCH_THRESHOLD:
-   *
-   * <pre>
-   *   [0x06][int32 BE payloadLen][zlib( [int32 BE pkLen][pk bytes] ... )]
-   * </pre>
-   *
-   * Verified against PocketMine master-legacy Server::batchPackets() /
-   * broadcastPacketsCallback() and the proxy's own BatchP translator
-   * (which inflates the symmetric client-to-server format). Compressing
-   * large packets (FullChunkData is ~83KB uncompressed) reduces each chunk
-   * from ~85 RakNet split fragments to 2-4, which drastically lowers UDP
-   * loss/retransmit storms on real networks.
-   */
-  private static byte[] wrapInBatch(byte[] encoded) throws Exception {
-    byte[] inner = Binary.appendBytes(Binary.writeInt(encoded.length), encoded);
-    byte[] compressed = Zlib.deflate(inner, Deflater.BEST_SPEED);
-    return Binary.appendBytes(
-        new byte[]{ProtocolInfo.BATCH_PACKET},
-        Binary.writeInt(compressed.length),
-        compressed
-    );
-  }
-
   public void sendPacket(String identifier, MCDPacket packet, boolean immediate){
     if(isDebug()){
         this.server.getLogger().debug("|Craftsman size| Send Datapack "+packet.getClass().getSimpleName());
@@ -235,17 +202,23 @@ public class RaknetInterfaz implements ServerInstance{
     boolean overridedImmediate = immediate || packet.isShouldSendImmediate();
     packet.encode();
     byte[] buffer = packet.getBuffer();
-    // PocketMine master-legacy batches+compresses every packet >= 512 bytes
-    // (Network::$BATCH_THRESHOLD = 512). Small packets go out directly as
-    // [0xfe][pid][fields]. Both forms are accepted by the 0.15.x client.
-    if(buffer.length >= BATCH_COMPRESS_THRESHOLD && packet.pid() != ProtocolInfo.BATCH_PACKET){
-      try {
-        buffer = wrapInBatch(buffer);
-      } catch (Exception e) {
-        // Fall back to sending the packet uncompressed (previous behavior).
-        this.server.getLogger().debug("Failed to batch-compress " + packet.getClass().getSimpleName() + ": " + e.getMessage());
-      }
-    }
+    // COMPRESSION REVERTED (f97e056): the wrapInBatch() compression of
+    // outgoing packets ≥512 bytes was a suspected cause of the 0.15.x
+    // client getting stuck at "Locating Server" without disconnecting.
+    // The compressed batch format itself is symmetric with the proxy's
+    // own BatchP translator (verified by symmetry test:
+    // [0xfe][0x06][int32 BE len][zlib-wrapped deflate([int32 pkLen][pk bytes]...)]),
+    // and matches MySoft-0.15.x-1.21.x's OldBatchPacket format for
+    // protocol < 90 (ZLIB_ENCODING_DEFLATE = RFC1950 zlib wrapper).
+    // However, some 0.15.x client builds appear to mishandle server-sent
+    // compressed batches during the login handshake — possibly an
+    // off-by-one in their inflater's expected trailer handling, or a
+    // frame-size limit smaller than the proxy assumes. Sending every
+    // packet raw (as before f97e056) restores the pre-regression
+    // behaviour. FullChunkData (~83KB) goes back to ~60 RakNet split
+    // fragments, which is less efficient on lossy networks but
+    // functional. Compression can be re-enabled per-packet once the
+    // root cause of the client-side inflation failure is identified.
     EncapsulatedPacket encapsulated = new EncapsulatedPacket();
     encapsulated.buffer = Binary.appendBytes((byte)0xfe, buffer);
     // CRITICAL FIX (verified against PocketMine master-legacy

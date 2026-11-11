@@ -6,10 +6,14 @@ import com.nukkitx.protocol.bedrock.packet.DisconnectPacket;
 
 /** v113 DisconnectPacket (String kickMessage) → 0.15.x DisconnectPacket (String message). */
 public class DisconnectPack implements BedrockPacketTranslator{
-  // immediate() removed: this translator sends packets to the 0.15.x
-  // client, so it MUST go through the per-player ordered FIFO to
-  // preserve packet ordering (inline execution on the Netty thread let
-  // it overtake earlier queued packets).
+  // CRITICAL: Disconnect must reach the client immediately - if the
+  // per-player bedrockTranslateQueue has been shut down (which is
+  // exactly what happens during Player.disconnect()), queueing this
+  // translator would silently drop the disconnect message via
+  // RejectedExecutionException. immediate()=true runs it inline on
+  // the Netty thread so the message always reaches the client.
+  @Override
+  public boolean immediate(){ return true; }
   @Override
   public void translate(BedrockPacket pk, Player player){
     DisconnectPacket packet = (DisconnectPacket) pk;

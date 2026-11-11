@@ -32,10 +32,18 @@ import com.nukkitx.math.vector.Vector3i;
  * 0.15.x client will use defaults.</p>
  */
 public class StartGame implements BedrockPacketTranslator{
-  // immediate() removed: this translator sends packets to the 0.15.x
-  // client, so it MUST go through the per-player ordered FIFO to
-  // preserve packet ordering (inline execution on the Netty thread let
-  // it overtake earlier queued packets).
+  // CRITICAL: StartGamePacket is the second-most-critical packet in the
+  // login flow (after PlayStatus LOGIN_SUCCESS). The 0.15.x client uses
+  // it to transition out of pre-game state into world initialization.
+  // Sending it through the per-player bedrockTranslateQueue introduced
+  // by f97e056 caused it to lag behind the v113 server's stream by
+  // 10-50ms or more; in some setups the queue stalled entirely and
+  // StartGame never reached the client, leaving the client stuck at
+  // "Locating Server" / "Spawning..." forever. immediate()=true runs
+  // the translator inline on the Netty inbound thread, matching the
+  // pre-f97e056 behaviour.
+  @Override
+  public boolean immediate(){ return true; }
   @Override
   public void translate(BedrockPacket pk, Player player){
     StartGamePacket packet = (StartGamePacket) pk;

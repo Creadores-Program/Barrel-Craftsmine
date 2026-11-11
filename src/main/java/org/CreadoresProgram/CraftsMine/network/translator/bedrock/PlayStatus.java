@@ -43,10 +43,21 @@ import com.nukkitx.protocol.bedrock.packet.PlayStatusPacket;
  * during terrain construction or entity spawn.</p>
  */
 public class PlayStatus implements BedrockPacketTranslator{
-  // immediate() removed: this translator sends packets to the 0.15.x
-  // client, so it MUST go through the per-player ordered FIFO to
-  // preserve packet ordering (inline execution on the Netty thread let
-  // it overtake earlier queued packets).
+  // CRITICAL: PlayStatus(LOGIN_SUCCESS) is the packet that transitions the
+  // 0.15.x client out of the "Locating Server" screen. It MUST be sent
+  // inline on the Netty inbound thread (immediate=true), NOT queued to
+  // the per-player bedrockTranslateQueue. The f97e056 commit removed
+  // immediate() thinking it would improve ordering, but the queue
+  // introduced a 10-50ms delay (or worse if the queue's single thread
+  // was busy) before the client received LOGIN_SUCCESS — long enough
+  // for the 0.15.x client to remain stuck at "Locating Server" forever
+  // in some setups. Restoring immediate()=true makes PlayStatus
+  // bypass the queue and reach the client the instant the v113 server
+  // sends it. The LoginStatusPacket.encode() already calls
+  // setShouldSendImmediate(true) so the RakNet layer sends it with
+  // PRIORITY_IMMEDIATE (separate UDP datagram, no queueing).
+  @Override
+  public boolean immediate(){ return true; }
   @Override
   public void translate(BedrockPacket pk, Player player){
     PlayStatusPacket packet = (PlayStatusPacket) pk;
