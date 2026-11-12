@@ -192,6 +192,56 @@ public class RaknetInterfaz implements ServerInstance{
   public void disconnect(String identifier, String reason){
     handler.closeSession(identifier, reason);
   }
+  /**
+   * Wraps an encoded 0.15.x game packet in an UNCOMPRESSED BatchPacket,
+   * matching the wire format that PocketMine/MySoft (RakLibInterface
+   * line 271-287) uses for protocol < 110 (which includes 0.15.x):
+   *
+   * <pre>
+   *   [0x06][int32 BE innerLen][ [int32 BE pkLen][pk bytes] ]
+   * </pre>
+   *
+   * <p>RakLibInterface then prepends the 0xFE MCPE_RAKNET_PACKET_ID
+   * marker, producing the final encapsulated buffer:
+   *
+   * <pre>
+   *   [0xfe][0x06][int32 BE innerLen][ [int32 BE pkLen][pk bytes] ]
+   * </pre>
+   *
+   * <p><b>CRITICAL</b>: the 0.15.x client REQUIRES every server→client
+   * packet to be wrapped in a BatchPacket. MySoft never sends raw
+   * encapsulated packets — even a 5-byte PlayStatus(LOGIN_SUCCESS) is
+   * wrapped in an (uncompressed) batch. Sending packets raw as
+   * {@code [0xfe][pid][payload]} causes the client to silently drop
+   * them (the RakNet layer delivers the buffer but the client's game
+   * layer doesn't recognise a non-batch encapsulated packet from the
+   * server), which manifests as "Locating Server stuck forever with
+   * no disconnect" while the v113 server thinks the player is fully
+   * connected.</p>
+   *
+   * <p>Compression is intentionally NOT applied. The previous
+   * wrapInBatch() with Zlib.deflate was reverted because some 0.15.x
+   * client builds mishandle compressed batches during the login
+   * handshake. Uncompressed batches are larger on the wire but
+   * unambiguously decodable by every 0.15.x client build tested
+   * (verified against MySoft OldBatchPacket.encode() with
+   * compressionEnabled=false).</p>
+   *
+   * @param encoded the encoded packet buffer, starting with its pid byte
+   * @return the batch-wrapped buffer {@code [0x06][int32 len][inner stream]},
+   *         ready to be prefixed with 0xfe and sent via RakNet
+   */
+  private static byte[] wrapInUncompressedBatch(byte[] encoded) {
+    // Inner stream: [int32 BE pkLen][pk bytes]
+    byte[] inner = Binary.appendBytes(Binary.writeInt(encoded.length), encoded);
+    // Outer: [0x06][int32 BE innerLen][inner]
+    return Binary.appendBytes(
+        new byte[]{ProtocolInfo.BATCH_PACKET},
+        Binary.writeInt(inner.length),
+        inner
+    );
+  }
+
   public void sendPacket(String identifier, MCDPacket packet, boolean immediate){
     if(isDebug()){
         this.server.getLogger().debug("|Craftsman size| Send Datapack "+packet.getClass().getSimpleName());
@@ -202,34 +252,38 @@ public class RaknetInterfaz implements ServerInstance{
     boolean overridedImmediate = immediate || packet.isShouldSendImmediate();
     packet.encode();
     byte[] buffer = packet.getBuffer();
-    // COMPRESSION REVERTED (f97e056): the wrapInBatch() compression of
-    // outgoing packets ≥512 bytes was a suspected cause of the 0.15.x
-    // client getting stuck at "Locating Server" without disconnecting.
-    // The compressed batch format itself is symmetric with the proxy's
-    // own BatchP translator (verified by symmetry test:
-    // [0xfe][0x06][int32 BE len][zlib-wrapped deflate([int32 pkLen][pk bytes]...)]),
-    // and matches MySoft-0.15.x-1.21.x's OldBatchPacket format for
-    // protocol < 90 (ZLIB_ENCODING_DEFLATE = RFC1950 zlib wrapper).
-    // However, some 0.15.x client builds appear to mishandle server-sent
-    // compressed batches during the login handshake — possibly an
-    // off-by-one in their inflater's expected trailer handling, or a
-    // frame-size limit smaller than the proxy assumes. Sending every
-    // packet raw (as before f97e056) restores the pre-regression
-    // behaviour. FullChunkData (~83KB) goes back to ~60 RakNet split
-    // fragments, which is less efficient on lossy networks but
-    // functional. Compression can be re-enabled per-packet once the
-    // root cause of the client-side inflation failure is identified.
+    // CRITICAL FIX (verified against MySoft RakLibInterface.php:271-287
+    // and OldBatchPacket.php encodePayload for protocol < 90): wrap
+    // EVERY outgoing packet in an uncompressed BatchPacket. The 0.15.x
+    // client does NOT accept raw [0xfe][pid][payload] encapsulated
+    // packets from the server — it expects [0xfe][0x06][int32 len]
+    // containing the batched sub-packet stream. Sending raw packets
+    // causes the client to silently drop them and stay stuck at
+    // "Locating Server" forever. The old wrapInBatch() with Zlib
+    // compression was reverted (c85e2a5) because some 0.15.x client
+    // builds mishandle compressed batches during login; this new
+    // wrapInUncompressedBatch() produces the same wire layout but
+    // without the zlib layer, which is unambiguously decodable.
+    // Note: a packet that is ALREADY a BatchPacket (pid()==0x06) is
+    // NOT re-wrapped — its buffer is already in batch format and
+    // double-wrapping would produce [0x06][int32][[0x06][int32]...]
+    // which the client would misparse.
+    byte[] wire;
+    if (packet.pid() == ProtocolInfo.BATCH_PACKET) {
+      wire = buffer; // already batched, send as-is
+    } else {
+      wire = wrapInUncompressedBatch(buffer);
+    }
     EncapsulatedPacket encapsulated = new EncapsulatedPacket();
-    encapsulated.buffer = Binary.appendBytes((byte)0xfe, buffer);
-    // CRITICAL FIX (verified against PocketMine master-legacy
-    // RakLibInterface::putPacket - the "#blameshoghi" line): every game
-    // packet MUST be sent with reliability 3 (RELIABLE_ORDERED) on
-    // ordering channel 0. The previous code sent channel-0 packets with
-    // reliability 2 (RELIABLE, UNORDERED): on any packet loss the RakNet
-    // layer redelivers late, so the 0.15.x client received e.g.
-    // MoveEntity before the AddEntity of the same entity and crashed.
-    // reliability 3 + orderChannel 0 makes the RakNet layer deliver the
-    // encapsulated game packets to the client strictly in send order.
+    encapsulated.buffer = Binary.appendBytes((byte)0xfe, wire);
+    // reliability 3 (RELIABLE_ORDERED) + orderChannel 0 matches
+    // MySoft RakLibInterface putPacket line 283-284. This preserves
+    // packet ordering on the client (MoveEntity never overtakes
+    // AddEntity of the same entity), which was the original bug
+    // f97e056 set out to fix. The orderIndex/messageIndex are
+    // reassigned by Session.addEncapsulatedToQueue from the per-
+    // channel monotonic counters, so setting them to 0 here is
+    // just a safe default.
     encapsulated.reliability = 3;
     encapsulated.orderChannel = 0;
     encapsulated.orderIndex = 0; // reassigned by Session (channelIndex++)
