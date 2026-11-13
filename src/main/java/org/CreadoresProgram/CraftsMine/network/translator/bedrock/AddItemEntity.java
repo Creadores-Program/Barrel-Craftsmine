@@ -33,5 +33,7 @@ public class AddItemEntity implements BedrockPacketTranslator{
       npk.speedZ = mot.getZ();
     }
     player.sendDataCraftsman(npk);
+    // Track the eid as known to the 0.15.x client (see Player.knownEntities).
+    player.getKnownEntities().add(packet.getRuntimeEntityId());
   }
 }

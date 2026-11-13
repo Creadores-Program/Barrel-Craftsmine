@@ -17,6 +17,11 @@ public class MobArmorEquipment implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
     MobArmorEquipmentPacket packet = (MobArmorEquipmentPacket) pk;
+    // Unknown-entity guard (see Player.knownEntities): the 0.15.x client
+    // crashes on armor packets for entities it never spawned.
+    if (!player.getKnownEntities().contains(packet.getRuntimeEntityId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.MobArmorEquipmentPacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.MobArmorEquipmentPacket();
     npk.eid = packet.getRuntimeEntityId();

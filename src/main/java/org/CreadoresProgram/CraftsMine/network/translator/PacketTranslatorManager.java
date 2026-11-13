@@ -28,8 +28,21 @@ public class PacketTranslatorManager {
   @Getter
   private final Map<Class<? extends BedrockPacket>, BedrockPacketTranslator> bedrockTranslators = new HashMap<>();
   private final Player player;
+  /**
+   * Config-driven blocklist of Bedrock packet class simple names (from
+   * config.yml `blockedClientPackets`) that must never be translated/
+   * forwarded to the 0.15.x client. Operators use it to isolate which
+   * packet class crashes a specific 0.15.x client build: add the class
+   * name, restart, test. Read once at construction (config.yml is only
+   * re-read on proxy restart, same as every other option); never null.
+   */
+  private final java.util.Set<String> blockedClientPackets;
   public PacketTranslatorManager(Player player){
     this.player = player;
+    java.util.List<String> cfg = Server.getInstance().getConfig().getBlockedClientPackets();
+    this.blockedClientPackets = (cfg == null)
+        ? java.util.Collections.emptySet()
+        : java.util.Collections.synchronizedSet(new java.util.HashSet<>(cfg));
     this.registerDefaultPackets();
   }
   private void registerDefaultPackets(){
@@ -140,6 +153,17 @@ public class PacketTranslatorManager {
     }
   }
   public void translate(BedrockPacket pk){
+    // Config-driven packet filter: never forward the listed packet
+    // classes to the 0.15.x client, even if a translator is registered.
+    if (!blockedClientPackets.isEmpty() && blockedClientPackets.contains(pk.getClass().getSimpleName())) {
+      if (Server.getInstance().getConfig().isDebug()) {
+        Server.getInstance().getLogger().debug(
+            "Blocked client packet " + pk.getClass().getSimpleName()
+            + " for player " + player.getCraftsmanUsername()
+            + " (blockedClientPackets)");
+      }
+      return;
+    }
     BedrockPacketTranslator translator = bedrockTranslators.get(pk.getClass());
     if(translator != null){
       if(translator.immediate()){

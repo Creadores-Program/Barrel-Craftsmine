@@ -19,6 +19,19 @@ public class TextPack implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
     TextPacket packet = (TextPacket) pk;
+    // Null/type guard: a v113 server must never send a TextPacket with a
+    // null type, but a malformed one would NPE the switch below and kill
+    // this player's translate queue. Treat null type as RAW.
+    if (packet.getType() == null) {
+      org.CreadoresProgram.CraftsMine.network.protocol.TextPacket npk =
+          new org.CreadoresProgram.CraftsMine.network.protocol.TextPacket();
+      npk.type = org.CreadoresProgram.CraftsMine.network.protocol.TextPacket.TYPE_RAW;
+      npk.source = "";
+      npk.message = packet.getMessage() == null ? "" : packet.getMessage();
+      npk.parameters = new String[0];
+      player.sendDataCraftsman(npk);
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.TextPacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.TextPacket();
     byte type;

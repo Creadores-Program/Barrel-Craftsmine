@@ -66,6 +66,17 @@ public class Config {
     @Getter
     public Integer timeSynchServer;
 
+    /**
+     * Packet-class simple names (e.g. "SetEntityDataPacket", "BossEventPacket")
+     * that the proxy will NEVER translate/forward to the 0.15.x client, even
+     * if a translator is registered. Operators use this to isolate which
+     * packet class crashes a specific 0.15.x client build: add the class,
+     * restart, test. Wildcards are not supported; the match is exact on the
+     * simple class name. The list is empty by default (nothing blocked).
+     */
+    @Getter
+    public java.util.List<String> blockedClientPackets;
+
     // versionBedrockServer removed: downstream is MCPE 1.1 (protocol v113)
     // only, hard-wired in Server.java. No longer configurable.
 }

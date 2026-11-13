@@ -28,6 +28,12 @@ public class MoveEntityAbsolute implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
     MoveEntityPacket packet = (MoveEntityPacket) pk;
+    // Unknown-entity guard: the 0.15.x client crashes on move packets
+    // for entities it never spawned (e.g. types dropped by the AddEntity
+    // whitelist). See Player.knownEntities.
+    if (!player.getKnownEntities().contains(packet.getRuntimeEntityId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.MoveEntitiesPacket();
     npk.eid = packet.getRuntimeEntityId();

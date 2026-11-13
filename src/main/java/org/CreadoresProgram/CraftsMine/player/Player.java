@@ -62,6 +62,24 @@ public class Player extends Vector3{
   private long clientID;
 
   /**
+   * Entity ids (runtime eids) that have actually been sent to the 0.15.x
+   * client via AddEntity/AddPlayer/AddItemEntity/AddPainting. The v113
+   * downstream server keeps streaming SetEntityData/MobEquipment/
+   * MoveEntity for entities the proxy DROPPED (e.g. entity types not in
+   * the 0.15.x whitelist, like Guardian=49). Forwarding those to the
+   * 0.15.x client references entities the client never spawned — it
+   * crashes the client's rendering without sending a Disconnect back,
+   * so the proxy only notices when the RakNet session times out
+   * (the "client stuck, dropped by timeout" symptom). Translators
+   * consult this set and silently drop packets for unknown eids.
+   * Thread-safe: written/read from the per-player translate queue, but
+   * AddPlayer/MovePlayer also run on Netty threads for the local player.
+   */
+  @Getter
+  private final java.util.Set<Long> knownEntities =
+      java.util.Collections.synchronizedSet(new java.util.HashSet<Long>());
+
+  /**
    * Protocol version advertised by the connected 0.15.x client in its
    * LoginPacket (81 = 0.15.0-0.15.3, 82 = 0.15.4+, 84 = 0.15.10).
    * Defaults to 84. Several 0.15.x packets changed layout between

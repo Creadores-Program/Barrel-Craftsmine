@@ -13,5 +13,7 @@ public class RemoveEntity implements BedrockPacketTranslator{
         new org.CreadoresProgram.CraftsMine.network.protocol.RemoveEntityPacket();
     npk.eid = packet.getUniqueEntityId();
     player.sendDataCraftsman(npk);
+    // The entity no longer exists on the 0.15.x client; stop tracking it.
+    player.getKnownEntities().remove(packet.getUniqueEntityId());
   }
 }

@@ -336,62 +336,36 @@ public class Binary {
     }
     public static byte[] writeMetadata(Map<Integer, Object[]> map){
         BinaryStream stream = new BinaryStream();
-        // CRITICAL FIX (ported from Nukkit-Retro writeLegacyMetadata):
-        // MCPE 0.15.x expects a FIXED set of default metadata entries to
-        // ALWAYS be present, even when the source metadata map is empty.
-        // Without these defaults the client uses uninitialized values for
-        // entity flags/air/nametag/etc., which can crash the client during
-        // entity rendering. The default entries are:
-        //   key 0  (BYTE):  DATA_FLAGS = 0 (no flags set)
-        //   key 1  (SHORT): DATA_AIR = 300 (full air supply)
-        //   key 2  (STRING): DATA_NAMETAG = "" (empty nametag)
-        //   key 3  (BYTE):  DATA_SHOW_NAMETAG = 0
-        //   key 4  (BYTE):  DATA_SILENT = 0
-        //   key 15 (BYTE):  DATA_NO_AI = 0
-        //   key 23 (LONG):  DATA_LEAD_HOLDER_EID = -1 (no lead)
-        //   key 24 (BYTE):  DATA_LEAD = 0 (not leashed)
-        // Entries from the input map override the defaults.
-        // Step 1: write the fixed defaults.
-        // key 0: BYTE type (0), flags=0
-        stream.putByte((byte) 0x00); // (0<<5)|(0&0x1f) = 0x00
-        stream.putByte((byte) 0);
-        // key 1: SHORT type (1), air=300
-        stream.putByte((byte) 0x21); // (1<<5)|(1&0x1f) = 0x21
-        stream.putLShort(300);
-        // key 2: STRING type (4), nametag=""
-        stream.putByte((byte) 0x82); // (4<<5)|(2&0x1f) = 0x82
-        stream.putLShort(0); // empty string length
-        // key 3: BYTE, show_nametag=0
-        stream.putByte((byte) 0x03); // (0<<5)|(3&0x1f) = 0x03
-        stream.putByte((byte) 0);
-        // key 4: BYTE, silent=0
-        stream.putByte((byte) 0x04);
-        stream.putByte((byte) 0);
-        // key 15: BYTE, no_ai=0
-        stream.putByte((byte) 0x0f); // (0<<5)|(15&0x1f) = 0x0f
-        stream.putByte((byte) 0);
-        // key 23: LONG type (7), lead_holder=-1
-        stream.putByte((byte) 0xf7); // (7<<5)|(23&0x1f) = 0xe0|0x17 = 0xf7
-        stream.putLLong(-1L);
-        // key 24: BYTE, lead=0
-        stream.putByte((byte) 0x18); // (0<<5)|(24&0x1f) = 0x18
-        stream.putByte((byte) 0);
-        // Step 2: write any additional entries from the input map that
-        // are NOT already in the default set (keys 0,1,2,3,4,15,23,24).
+        // Wire format (matches MBNukkit / Nukkit 0.15 Binary.writeMetadata
+        // and the 0.15.x client's readMetadata): a sequence of entries
+        //   [((type << 5) | (key & 0x1F)) byte][type-specific payload]
+        // followed by a single 0x7f terminator byte. An empty map is a
+        // valid, common case (SetEntityData with nothing to update /
+        // Add* with default metadata): it encodes as JUST the 0x7f byte.
+        //
+        // NOTE: a previous version of this method injected a fixed set of
+        // "default" entries (flags/air/nametag/lead...) into EVERY packet.
+        // That was NOT what Nukkit 0.15 does — defaults live only in the
+        // full EntityDataMap sent with Add* packets (see MBNukkit
+        // Entity.java initEntityDataDefaults), and re-sending them in
+        // every SetEntityData forced the client to re-apply the whole
+        // default set on every update (and could overwrite real values
+        // with defaults when a partial update arrived). Reverted to the
+        // faithful map + 0x7f encoding.
         if (map != null) {
-            java.util.Set<Integer> defaultKeys = new java.util.HashSet<>(
-                java.util.Arrays.asList(0, 1, 2, 3, 4, 15, 23, 24));
             for (int id : map.keySet()) {
-                if (defaultKeys.contains(id)) continue; // skip defaults
                 Object[] d = map.get(id);
+                if (d == null || d.length < 2 || d[0] == null || d[1] == null) {
+                    continue; // skip malformed entry rather than crash encode
+                }
                 int type = (int) d[0];
-                stream.putByte((byte) (((type << 5) | (id & 0x1F)) & 0xff));
+                stream.putByte((byte) (((type << 5) | (id & 0x1F)) & 0xff)); //0 = getType
                 switch(type){
                     case 0:
                         if(!(d[1] instanceof Byte)){
-                        stream.putByte(((Integer) d[1]).byteValue());
+                        stream.putByte(((Integer) d[1]).byteValue()); //1 = ByteEntityData.getData()
                         }else{
-                            stream.putByte(((byte) d[1]));
+                        stream.putByte(((byte) d[1]));
                         }
                         break;
                     case 1:
@@ -404,14 +378,16 @@ public class Binary {
                         stream.putLFloat(((Float) d[1]));
                         break;
                     case 4:
-                        stream.putLShort(((String) d[1]).getBytes(StandardCharsets.UTF_8).length);
-                        stream.put(((String) d[1]).getBytes(StandardCharsets.UTF_8));
+                        String s = (String) d[1];
+                        byte[] sBytes = s.getBytes(StandardCharsets.UTF_8);
+                        stream.putLShort(sBytes.length);
+                        stream.put(sBytes);
                         break;
                     case 5:
                         Object[] slot = (Object[]) d[1];
-                        stream.putLShort((Integer) slot[0]);
-                        stream.putByte((byte) slot[1]);
-                        stream.putLShort((Integer) slot[2]);
+                        stream.putLShort((Integer) slot[0]); //blockid
+                        stream.putByte((byte) slot[1]); //meta
+                        stream.putLShort((Integer) slot[2]); //count
                         break;
                     case 6:
                         int[] pos = (int[]) d[1];
@@ -422,10 +398,14 @@ public class Binary {
                     case 7:
                         stream.putLLong(((Long) d[1]));
                         break;
+                    default:
+                        // Unknown 0.15.x metadata type — we already wrote
+                        // the header byte, so rewind is impossible; write
+                        // nothing extra. Callers only produce types 0-7.
+                        break;
                 }
             }
         }
-        // Step 3: end marker
         stream.putByte((byte) 0x7f);
         return stream.getBuffer();
     }

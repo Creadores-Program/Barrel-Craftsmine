@@ -21,6 +21,12 @@ public class SetEntityLink implements BedrockPacketTranslator{
     SetEntityLinkPacket packet = (SetEntityLinkPacket) pk;
     EntityLinkData link = packet.getEntityLink();
     if (link == null) return;
+    // Unknown-entity guard (see Player.knownEntities): both ends of the
+    // link must exist on the 0.15.x client.
+    if (!player.getKnownEntities().contains(link.getPassengerUniqueId())
+        || !player.getKnownEntities().contains(link.getVehicleUniqueId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.SetEntityLinkPacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.SetEntityLinkPacket();
     // 0.15.x "rider" = the entity being carried; "riding" = the vehicle.

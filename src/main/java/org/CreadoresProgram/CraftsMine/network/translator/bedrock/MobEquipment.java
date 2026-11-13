@@ -17,6 +17,14 @@ public class MobEquipment implements BedrockPacketTranslator{
   @Override
   public void translate(BedrockPacket pk, Player player){
     MobEquipmentPacket packet = (MobEquipmentPacket) pk;
+    // Unknown-entity guard: the 0.15.x client crashes on equipment
+    // packets for entities it never spawned (crash snapshot had
+    // MobEquipment for eids 1617/1621/1622 with no AddEntity sent —
+    // entity types dropped by the AddEntity whitelist). See
+    // Player.knownEntities.
+    if (!player.getKnownEntities().contains(packet.getRuntimeEntityId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.MobEquipmentPacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.MobEquipmentPacket();
     npk.eid = packet.getRuntimeEntityId();

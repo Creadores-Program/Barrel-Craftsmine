@@ -31,6 +31,10 @@ public class EntityEvent implements BedrockPacketTranslator{
   public void translate(BedrockPacket pk, Player player){
     EntityEventPacket packet = (EntityEventPacket) pk;
     if (packet.getType() == null) return;
+    // Unknown-entity guard (see Player.knownEntities).
+    if (!player.getKnownEntities().contains(packet.getRuntimeEntityId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.EntityEventPacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.EntityEventPacket();
     npk.eid = packet.getRuntimeEntityId();

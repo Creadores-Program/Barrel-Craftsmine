@@ -17,6 +17,10 @@ public class SetEntityMotion implements BedrockPacketTranslator{
         new org.CreadoresProgram.CraftsMine.network.protocol.SetEntityMotionPacket();
     Vector3f mot = packet.getMotion();
     if (mot == null) return;
+    // Unknown-entity guard (see Player.knownEntities).
+    if (!player.getKnownEntities().contains(packet.getRuntimeEntityId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.SetEntityMotionPacket.Entry entry =
         new org.CreadoresProgram.CraftsMine.network.protocol.SetEntityMotionPacket.Entry(
             packet.getRuntimeEntityId(), mot.getX(), mot.getY(), mot.getZ());

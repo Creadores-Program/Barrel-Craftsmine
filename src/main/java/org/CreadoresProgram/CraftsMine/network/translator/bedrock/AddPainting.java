@@ -28,5 +28,7 @@ public class AddPainting implements BedrockPacketTranslator{
     npk.direction = packet.getDirection();
     npk.title = packet.getMotive() == null ? "" : packet.getMotive();
     player.sendDataCraftsman(npk);
+    // Track the eid as known to the 0.15.x client (see Player.knownEntities).
+    player.getKnownEntities().add(packet.getRuntimeEntityId());
   }
 }

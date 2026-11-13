@@ -19,6 +19,10 @@ public class Animate implements BedrockPacketTranslator{
   public void translate(BedrockPacket pk, Player player){
     AnimatePacket packet = (AnimatePacket) pk;
     if (packet.getAction() == null) return;
+    // Unknown-entity guard (see Player.knownEntities).
+    if (!player.getKnownEntities().contains(packet.getRuntimeEntityId())) {
+      return;
+    }
     org.CreadoresProgram.CraftsMine.network.protocol.AnimatePacket npk =
         new org.CreadoresProgram.CraftsMine.network.protocol.AnimatePacket();
     npk.action = packet.getAction().ordinal();

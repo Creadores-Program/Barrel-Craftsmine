@@ -134,5 +134,9 @@ public class AddEntity implements BedrockPacketTranslator{
     // Binary.writeMetadata) — entity spawns with default visual state.
     npk.metadata = new java.util.HashMap<>();
     player.sendDataCraftsman(npk);
+    // Track the eid as known to the 0.15.x client so downstream
+    // SetEntityData/MobEquipment/MoveEntity for it are not dropped by
+    // the unknown-entity guard.
+    player.getKnownEntities().add(packet.getRuntimeEntityId());
   }
 }

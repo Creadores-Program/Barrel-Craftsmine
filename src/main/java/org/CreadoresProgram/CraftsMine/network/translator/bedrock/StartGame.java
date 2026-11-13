@@ -51,6 +51,11 @@ public class StartGame implements BedrockPacketTranslator{
     // when constructing MovePlayerC etc. The 0.15.x client eid == v113
     // runtime entity id (both are server-assigned longs).
     player.setRuntimeEntityId(packet.getRuntimeEntityId());
+    // The local player's own entity exists on the 0.15.x client from the
+    // moment StartGame is processed (its eid is embedded in the packet),
+    // so packets targeting it (MovePlayer/SetEntityData/UpdateAttributes)
+    // are always valid — seed it into knownEntities.
+    player.getKnownEntities().add(packet.getRuntimeEntityId());
     player.setGamemode(packet.getWorldGameType() == null ? 0 : packet.getWorldGameType().ordinal());
 
     org.CreadoresProgram.CraftsMine.network.protocol.StartGamePacket npk =

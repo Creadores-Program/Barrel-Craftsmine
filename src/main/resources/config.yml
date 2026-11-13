@@ -30,3 +30,10 @@ langPlayer: "en-US"
 synchServer: false
 # time refress(in miliseconds)
 timeSynchServer: 15000
+
+# Packets blocked from being sent to the 0.15.x client.
+# List the packet class simple name (as shown in debug logs, e.g.
+# "SetEntityDataPacket", "MobEquipmentPacket", "BossEventPacket").
+# Use it to isolate which packet crashes a specific 0.15.x client build:
+# add the name, restart the proxy, test. Exact match, no wildcards.
+blockedClientPackets: []
