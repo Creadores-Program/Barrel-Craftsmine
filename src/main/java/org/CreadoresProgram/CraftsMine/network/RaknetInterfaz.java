@@ -251,44 +251,18 @@ public class RaknetInterfaz implements ServerInstance{
     }
     boolean overridedImmediate = immediate || packet.isShouldSendImmediate();
     packet.encode();
-    byte[] buffer = packet.getBuffer();
-    // CRITICAL FIX (verified against MySoft RakLibInterface.php:271-287
-    // and OldBatchPacket.php encodePayload for protocol < 90): wrap
-    // EVERY outgoing packet in an uncompressed BatchPacket. The 0.15.x
-    // client does NOT accept raw [0xfe][pid][payload] encapsulated
-    // packets from the server — it expects [0xfe][0x06][int32 len]
-    // containing the batched sub-packet stream. Sending raw packets
-    // causes the client to silently drop them and stay stuck at
-    // "Locating Server" forever. The old wrapInBatch() with Zlib
-    // compression was reverted (c85e2a5) because some 0.15.x client
-    // builds mishandle compressed batches during login; this new
-    // wrapInUncompressedBatch() produces the same wire layout but
-    // without the zlib layer, which is unambiguously decodable.
-    // Note: a packet that is ALREADY a BatchPacket (pid()==0x06) is
-    // NOT re-wrapped — its buffer is already in batch format and
-    // double-wrapping would produce [0x06][int32][[0x06][int32]...]
-    // which the client would misparse.
-    byte[] wire;
-    if (packet.pid() == ProtocolInfo.BATCH_PACKET) {
-      wire = buffer; // already batched, send as-is
-    } else {
-      wire = wrapInUncompressedBatch(buffer);
-    }
     EncapsulatedPacket encapsulated = new EncapsulatedPacket();
-    encapsulated.buffer = Binary.appendBytes((byte)0xfe, wire);
-    // reliability 3 (RELIABLE_ORDERED) + orderChannel 0 matches
-    // MySoft RakLibInterface putPacket line 283-284. This preserves
-    // packet ordering on the client (MoveEntity never overtakes
-    // AddEntity of the same entity), which was the original bug
-    // f97e056 set out to fix. The orderIndex/messageIndex are
-    // reassigned by Session.addEncapsulatedToQueue from the per-
-    // channel monotonic counters, so setting them to 0 here is
-    // just a safe default.
-    encapsulated.reliability = 3;
-    encapsulated.orderChannel = 0;
-    encapsulated.orderIndex = 0; // reassigned by Session (channelIndex++)
-    encapsulated.messageIndex = 0; // reassigned by Session (messageIndex++)
-    handler.sendEncapsulated(identifier, encapsulated, (overridedImmediate ? RakNet.PRIORITY_IMMEDIATE : RakNet.PRIORITY_NORMAL));
+    encapsulated.buffer = Binary.appendBytes((byte)0xfe, packet.getBuffer());
+    encapsulated.needACK = true;
+    if(packet.getChannel() == 0){
+      encapsulated.reliability = 2;
+    }else{
+      encapsulated.reliability = 3;
+      encapsulated.orderChannel = packet.getChannel();
+      encapsulated.orderIndex = 0;
+    }
+    encapsulated.messageIndex = 0;
+    handler.sendEncapsulated(identifier, encapsulated, RakNet.FLAG_NEED_ACK | (overridedImmediate ? RakNet.PRIORITY_IMMEDIATE : RakNet.PRIORITY_NORMAL));
   }
   private boolean isDebug(){
     return this.server.getConfig().isDebug();
