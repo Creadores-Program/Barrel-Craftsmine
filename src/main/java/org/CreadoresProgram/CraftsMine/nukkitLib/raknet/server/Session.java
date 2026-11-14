@@ -322,9 +322,18 @@ public class Session {
 
     private void handleEncapsulatedPacket(EncapsulatedPacket packet) throws Exception {
         if (packet.messageIndex == null) {
+            System.out.println("[DIAG-SES] route-direct (msgIdx=null) state=" + this.state
+                + " bufLen=" + (packet.buffer == null ? -1 : packet.buffer.length)
+                + " first=" + (packet.buffer == null || packet.buffer.length == 0 ? "-" : String.format("%02x", packet.buffer[0])));
             this.handleEncapsulatedPacketRoute(packet);
         } else {
+            System.out.println("[DIAG-SES] msgIdx=" + packet.messageIndex
+                + " winStart=" + this.reliableWindowStart + " winEnd=" + this.reliableWindowEnd
+                + " lastRel=" + this.lastReliableIndex + " state=" + this.state
+                + " bufLen=" + (packet.buffer == null ? -1 : packet.buffer.length)
+                + " first=" + (packet.buffer == null || packet.buffer.length == 0 ? "-" : String.format("%02x", packet.buffer[0])));
             if (packet.messageIndex < this.reliableWindowStart || packet.messageIndex > this.reliableWindowEnd) {
+                System.out.println("[DIAG-SES]   -> DROPPED (outside reliable window)");
                 return;
             }
 
@@ -333,6 +342,7 @@ public class Session {
                 this.reliableWindowStart++;
                 this.reliableWindowEnd++;
                 this.handleEncapsulatedPacketRoute(packet);
+                System.out.println("[DIAG-SES]   -> routed (sequential)");
 
                 if (!this.reliableWindow.isEmpty()) {
                     TreeMap<Integer, EncapsulatedPacket> sortedMap = new TreeMap<>(this.reliableWindow);
@@ -352,6 +362,7 @@ public class Session {
                     }
                 }
             } else {
+                System.out.println("[DIAG-SES]   -> queued to reliableWindow (gap=" + (packet.messageIndex - this.lastReliableIndex) + ")");
                 this.reliableWindow.put(packet.messageIndex, packet);
             }
         }
@@ -446,6 +457,14 @@ public class Session {
                         this.sessionManager.streamEncapsulated(this, packet);
                     }
                 }
+            } else if (state == STATE_CONNECTED) {
+                // FIX: any pid < 0x80 that is not a RakNet internal control
+                // packet (CLIENT_CONNECT, CLIENT_HANDSHAKE, DISCONNECT, PING,
+                // PONG) is a 0.15.x GAME packet (Batch 0x06, Login 0x01,
+                // MovePlayer 0x13, ...). Without this branch the proxy silently
+                // drops EVERY game packet from the client — login, chat,
+                // movement, interact — and the downstream never sees them.
+                this.sessionManager.streamEncapsulated(this, packet);
             }
         } else if (state == STATE_CONNECTED) {
             this.sessionManager.streamEncapsulated(this, packet);

@@ -1,6 +1,5 @@
 package org.CreadoresProgram.CraftsMine.server;
 import lombok.Getter;
-import lombok.Setter;
 import org.yaml.snakeyaml.Yaml;
 import org.CreadoresProgram.CraftsMine.utils.Logger;
 import org.CreadoresProgram.CraftsMine.utils.TextFormat;
@@ -18,9 +17,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.zip.GZIPInputStream;
-import java.net.URL;
 import com.nukkitx.nbt.NBTInputStream;
 import com.nukkitx.nbt.NbtMap;
 import com.nukkitx.nbt.NbtType;

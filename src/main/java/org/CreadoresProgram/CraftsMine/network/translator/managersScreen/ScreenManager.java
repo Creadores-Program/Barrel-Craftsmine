@@ -1,11 +1,10 @@
-package org.CreadoresProgram.CraftsMine.network.translator.managerScreen;
+package org.CreadoresProgram.CraftsMine.network.translator.managersScreen;
 import org.CreadoresProgram.CraftsMine.player.Player;
 import org.CreadoresProgram.CraftsMine.network.protocol.TextPacket;
 import javax.swing.Timer;
 import java.awt.event.ActionListener;
 import java.awt.event.ActionEvent;
 import lombok.Setter;
-import lombok.Getter;
 public class ScreenManager{
   @Setter
   private String scoreBoard = "";

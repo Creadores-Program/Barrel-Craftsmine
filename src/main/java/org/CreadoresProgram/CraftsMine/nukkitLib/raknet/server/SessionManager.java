@@ -42,6 +42,12 @@ public class SessionManager {
     protected final Map<String, Long> block = new HashMap<>();
     protected final Map<String, Integer> ipSec = new HashMap<>();
 
+    //FIX silent-ban: first timestamp and count of recent datagram parse
+    //failures per source address, used to ban only after repeated errors
+    //instead of on the very first one.
+    protected final Map<String, Long> parseFailures = new HashMap<>();
+    protected final Map<String, Integer> parseFailureCounts = new HashMap<>();
+
     public boolean portChecking = true;
 
     public final long serverId;
@@ -82,8 +88,28 @@ public class SessionManager {
                     }
                     --max;
                 } catch (Exception e) {
+                    //FIX: the old code banned the source IP for 300 seconds on
+                    //the FIRST exception while parsing a single datagram, and
+                    //the exception itself was never logged. One corrupt UDP
+                    //packet silently kicked a legitimate 0.15.x player for
+                    //5 minutes with no trace in the log. Now the exception is
+                    //always logged, and the address is only banned after 5
+                    //parse failures within 60 seconds.
                     if (!"".equals(currentSource)) {
-                        this.blockAddress(currentSource);
+                        this.getLogger().logException(e);
+                        long now = System.currentTimeMillis();
+                        long firstFailure = this.parseFailures.getOrDefault(currentSource, now);
+                        if (now - firstFailure > 60_000L) {
+                            firstFailure = now;
+                        }
+                        int failures = this.parseFailureCounts.merge(currentSource, 1, Integer::sum);
+                        if (failures >= 5) {
+                            this.blockAddress(currentSource);
+                            this.parseFailures.remove(currentSource);
+                            this.parseFailureCounts.remove(currentSource);
+                        } else {
+                            this.parseFailures.put(currentSource, firstFailure);
+                        }
                     }
                     // else ignore
                 }

@@ -1,9 +1,5 @@
 package org.CreadoresProgram.CraftsMine.utils;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.regex.Pattern;
-
 /**
  * All supported formatting values for chat and console.
  */

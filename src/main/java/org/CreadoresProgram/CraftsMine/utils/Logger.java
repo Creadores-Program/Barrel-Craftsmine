@@ -1,5 +1,4 @@
 package org.CreadoresProgram.CraftsMine.utils;
-import org.CreadoresProgram.CraftsMine.utils.TextFormat;
 public class Logger{
   public String prefix;
   public Logger(String prefix){
