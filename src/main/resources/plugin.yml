@@ -1,0 +1,19 @@
+name: CraftsmineNKM
+main: com.craftsmine.nkm.CraftsmineNKMPlugin
+version: "${project.version}"
+api: ["1.0.0"]
+load: STARTUP
+author: CraftsmineNKM
+description: "Multiversion legacy protocol bridge for Nukkit-MOT supporting MCPE 0.15.0 (Protocol 80) through 1.1.x (Protocol 113)."
+
+commands:
+  craftsmine:
+    description: "Manage CraftsmineNKM legacy protocol bridge, real-time debug logs, and performance stats."
+    usage: "/craftsmine <status|debug <on|off>|reload|logs [lines]|protocols|sessions>"
+    aliases: ["cmnkm", "nkm"]
+    permission: craftsmine.admin
+
+permissions:
+  craftsmine.admin:
+    description: "Allows full access to CraftsmineNKM monitoring and debug controls."
+    default: op

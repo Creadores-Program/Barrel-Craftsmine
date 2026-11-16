@@ -1,34 +1,57 @@
-# Proxy (Upstream) Server
-bindAddress: "0.0.0.0"
-port: 19132
-motd: "A CraftsMine Proxy"
-submotd: "CraftsMine Software by Creadores Program"
-# max players in proxy
-maxplayers: 10
-# Message when the proxy is closed
-shutdownMessage: "Proxy Closed"
-# Downstream server (bedrock NukkitPM1E, or multiversion, or versionBedrockServer option version)
-bedrockAddress: "test.example.com"
-bedrockPort: 19132
-# Version for Minecraft Bedrock Server (1.7|1.8|1.9|1.10)
-versionBedrockServer: "1.7"
+# ==============================================================================
+# CraftsmineNKM - Nukkit-MOT Legacy Multiversion Bridge (Protocol 80 -> 113)
+# ==============================================================================
 
-#Debug log?
+# Activa o desactiva el modo Debug en tiempo real para monitoreo detallado de paquetes,
+# chunks, negociacion RakNet 7/8 y tiempos de traduccion.
 debug: false
-# Generate console.log?
-consoleLog: true
 
-# Free memory when disconnecting a player
-gcCollectionDiconnectPlayer: true
-# Free memory auto
-gcCollectionAuto: true
-# Free memory in time... (from gcCollectionAuto)
-gcCollectionTime: 1800000
+protocols:
+  # Protocolo minimo permitido (80 = MCPE 0.15.0 alpha, 81 = 0.15.0-0.15.3)
+  min-protocol: 80
+  # Protocolo puente maximo gestionado por CraftsmineNKM (113 = MCPE 1.1.0-1.1.7)
+  # Los protocolos >= 114 continuan directo por el nucleo Multiversion de Nukkit-MOT.
+  max-protocol: 113
+  # Habilita RakNet Protocol 7 en RakNetInterface para aceptar clientes 0.15.0 - 0.15.10
+  enable-raknet-v7: true
+  # Omite ResourcePacksInfo/ResourcePackStack en clientes < 90 (0.15.x no los soporta)
+  auto-bypass-resource-packs-015: true
+  # Evita desconectar clientes ante paquetes modernos sin equivalente en 0.15.x-1.0.x
+  suppress-unknown-packets: true
 
-# language code for the players
-langPlayer: "en-US"
+logging:
+  # Sistema de logs detallado para monitoreo en tiempo real
+  enabled: true
+  # Registra conexiones, desconexiones y deteccion de version de cliente
+  log-connections: true
+  # Registra handshake RakNet (v7/v8) y reescritura de LoginPacket
+  log-protocol-negotiation: true
+  # Registra cada paquete traducido (requiere debug: true para flujo por paquete)
+  log-packet-translation: true
+  # Registra conversion de chunks de 1.1.0 (XZY) a 0.15.x/0.16.x (columnas)
+  log-chunk-conversion: true
+  # Registra paquetes suprimidos o no soportados por clientes antiguos
+  log-dropped-packets: true
+  # Emite resumen periodico de rendimiento y estabilidad en consola/archivo
+  log-performance-metrics: true
+  # Guarda los logs en un archivo dedicado dentro de plugins/CraftsmineNKM/logs/
+  file-logging: true
+  log-file: "logs/craftsmine-realtime.log"
+  # Lineas retenidas en memoria para consulta inmediata con /craftsmine logs
+  max-buffer-lines: 500
+  # Intervalo en segundos entre reportes de metricas (0 para desactivar reporte periodico)
+  metrics-interval-seconds: 60
 
-#synchronize motd with target server
-synchServer: false
-# time refress(in miliseconds)
-timeSynchServer: 15000
+performance:
+  # Nivel de compresion zlib para lotes salientes hacia clientes 80-112 (1-9)
+  compression-level: 6
+  # Limite maximo de bytes por lote entrante para proteger la estabilidad del servidor
+  max-batch-bytes: 4194304
+  # Desacopla inmediatamente el handler Netty para clientes >= 113 (cero latencia extra)
+  detach-modern-clients: true
+  # Tamano inicial de buffers reutilizables por hilo Netty
+  initial-buffer-bytes: 8192
+  # Tiempo maximo sin datagramas RakNet antes de desconectar por Time out (ms, minimo 10000)
+  session-timeout-ms: 30000
+  # Canales de ordenamiento RakNet permitidos en sesiones hijas (0.15.x usa hasta 32)
+  ordering-channels: 32
