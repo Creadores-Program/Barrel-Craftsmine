@@ -66,3 +66,13 @@ target/CraftsmineNKM-1.0.0.jar
 
 * Optimized primarily for **MCPE 0.15.10 (Protocol 84)** in minigame environments and Overworld worlds.
 * It is recommended to restrict access to modern dimensions (such as the updated Nether) or use *Fast Respawn* rules to ensure maximum stability on low-resource clients.
+
+## Characteristics that Cause Crashes (Known)
+- Respawning
+- Opening Inventory
+- Some Entities
+- Dimensions outside the main dimension (end, nether)
+## Missing Characteristics
+- Commands
+- Skins from other players
+- and more...
