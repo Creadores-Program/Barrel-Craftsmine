@@ -66,3 +66,24 @@ target/CraftsmineNKM-1.0.0.jar
 
 * Optimisé principalement pour **MCPE 0.15.10 (Protocole 84)** dans des environnements de mini-jeux et des mondes Overworld.
 * Il est recommandé de restreindre l'accès aux dimensions modernes (comme le Nether mis à jour) ou d'utiliser des règles de réapparition rapide (*Fast Respawn*) pour garantir une stabilité maximale sur les clients à faibles ressources.
+
+## Caractéristiques provoquant des plantages (connues)
+
+- Réapparition
+- Ouverture de l'inventaire
+- Certaines entités
+- Dimensions hors de la dimension principale (End, Nether)
+## Caractéristiques manquantes
+
+- Commandes
+## Caractéristiques provoquant des plantages (connues)
+
+- Réapparition
+- Ouverture de l'inventaire
+- Certaines entités
+- Dimensions hors de la dimension principale (End, Nether)
+## Caractéristiques manquantes
+
+- Commandes
+- Skins d'autres joueurs
+- et plus encore...
