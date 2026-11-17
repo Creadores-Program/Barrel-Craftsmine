@@ -1,76 +1,68 @@
-# CraftsMineNKM (Beta)
+# CraftsMineNKM
 
-> *Formerly known as **Barrel CraftsMine***
+> *Previously known as **Barrel CraftsMine***
 
-Native protocol translation plugin for **Nukkit-MOT** extending server compatibility from **Protocol 113 (MCPE 1.1.0)** to **Protocol 80 (MCPE 0.15.0)**, allowing classic Minecraft Pocket Edition clients to play alongside modern versions without the need for external proxies and with zero overhead for native clients (`>=1.1.0`).
+A native protocol translation plugin for **Nukkit-MOT** that extends server compatibility from **Protocol 113 (MCPE 1.1.0)** down to **Protocol 80 (MCPE 0.15.0)**, allowing classic Minecraft Pocket Edition clients to play alongside modern versions without external proxies and with zero overhead for native clients (`>= 1.1.0`).
 
 ---
 
 ## History and Architecture
 
-Originally conceived as a standalone proxy (**Barrel CraftsMine**), the project evolved into a **100% native architecture as a plugin for Nukkit-MOT**. When running directly on the network stack and server world engine, it eliminates the double serialization of RakNet, reduces latency and ensures ideal stable sessions for lobbies, mini-games (TNT Run, TNT Tag, Parkour) and multiversion servers.
+Originally conceived as an independent proxy (**Barrel CraftsMine**), the project evolved into a **100% native architecture as a plugin for Nukkit-MOT**. By running directly on the server's network stack and world engine, it eliminates double RakNet serialization, reduces latency, and guarantees stable sessions ideal for lobbies, minigames (TNT Run, TNT Tag, Parkour), and multi-version servers.
 
 ### Credits and Technical References
-**Development and Architecture:** Creators Program (Trollhunters501) assisted by code engineering agents in **Google AI Studio**.
-**Reverse Engineering and Protocol Reference:** Based on the package structure and network mapping of [MySoft-0.15.x-1.21.x](https://github.com/Dr1xyDev/MySoft-0.15.x-1.21.x) (MoutshetMine reference code) and MCPE legacy protocol specifications.
+* **Development and Architecture:** Creadores Program (Trollhunters501) assisted by code engineering agents in **Google AI Studio**.
+* **Reverse Engineering and Protocol Reference:** Based on package structures and network mappings from [MySoft-0.15.x-1.21.x](https://github.com/Dr1xyDev/MySoft-0.15.x-1.21.x) (reference code for multi-version PocketMine) and legacy MCPE protocol specifications.
 
 ---
 
-## Protocols Supported (80 – 113+)
+## Supported Protocols (80 – 113+)
 
 | Protocol | MCPE Version | RakNet | Translation Strategy |
-|------------------------------------------------------------------------------------------------------------------------------------------------------
-| `80 - 84` | `0.15.0` – `0.15.10` | | `v7` | Fixed coding (BE/LE), without VarInts, 128-column chunks, ResourcePacks bypass and legacy block/biome remapping |
-| `90 - 91` | `0.15.90` – `0.17.0` | `v8` | | Varints initials, IDs `PacketsIds91`, chunks with classic ordering and ARGB biomes |
-| `92 - 101` | `1.0.0` – `1.0.4.0` | | `v8` | SubChunks XZY, IDs `PacketsIds100`, `BatchPacket` with prefix `0x06` |
-| `102 - 107` | `1.0.4` – `1.0.9` | `v8` | | IDs `PacketsIds102` / `PacketsIds105`, `LoginPacket` tablet |
-| `110 - 112` | `1.1.0.0` – `1.1.0.9` | `v8` | | | | | IDs `PacketsIds110`, adaptation of `MovePlayerPacket` (`ridingEid`) |
-| `113+` | `1.1.0` – `1.26.x` | `v8-v11` | **Nukkit-MOT** Native (automatic decoupling without performance impact) |
+|----------|--------------|--------|----------------------|
+| `80 - 84` | `0.15.0` – `0.15.10` | `v7` | Fixed encoding (BE/LE), no VarInts, 128-column chunks, ResourcePacks bypass, and legacy block/biome remapping |
+| `90 - 91` | `0.15.90` – `0.17.0` | `v8` | Initial VarInts, `PacketsIds91` IDs, chunks with classic ordering + ARGB biomes |
+| `92 - 101` | `1.0.0` – `1.0.4.0` | `v8` | XZY SubChunks, `PacketsIds100` IDs, `BatchPacket` with `0x06` prefix |
+| `102 - 107` | `1.0.4` – `1.0.9` | `v8` | `PacketsIds102` / `PacketsIds105` IDs, compressed `LoginPacket` |
+| `110 - 112` | `1.1.0.0` – `1.1.0.9` | `v8` | `PacketsIds110` IDs, `MovePlayerPacket` (`ridingEid`) adaptation |
+| `113+` | `1.1.0` – `1.26.x` | `v8-v11` | **Natively handled by Nukkit-MOT** (automatic decoupling with zero performance impact) |
 
 ---
 
-## Main Features
+## Key Features
 
-***Real Time StraightBridge:** Intercept and translate incoming and outgoing packages only for players connected from legacy versions (`< 113`), leaving the flow of modern players intact.
-* **Chunks and World adaptation:** Automatic conversion of modern subchunks to flat block and biome format supported by MCPE 0.15.x, remapping block IDs after 0.15 to avoid forced closures in the client.
-* **Chat and Legacy Commands compatibility:** Two-way message translation and transparent execution of commands sent in plain text format from 0.15.x clients.
-* **Centralized Settings:** Total bridge behavior control, packet diagnosis and compatibility settings from `config.yml`.
+* **Direct Real-Time Bridge:** Intercepts and translates incoming and outgoing packets exclusively for legacy clients (`< 113`), leaving the data flow for modern players completely untouched.
+* **Chunk and World Adaptation:** Automatic conversion of modern subchunks into the flat block and biome format supported by MCPE 0.15.x, remapping post-0.15 block IDs to prevent client crashes.
+* **Legacy Chat and Command Compatibility:** Bidirectional message translation and transparent execution of text-format commands sent from 0.15.x clients.
+* **Centralized Configuration:** Full control over bridge behavior, packet diagnostics, and compatibility settings directly from `config.yml`.
 
 ---
 
 ## Installation
 
 1. Download or compile the plugin `.jar` file.
-2. Place `CraftsmineNKM-1.0.0.jar` inside your server's `plugins/` folder **Nukkit-MOT**.
-3. Start or restart the server to generate the `plugins/CraftsmineNKM/config.yml` configuration file.
-4. Make sure you have strict version/Xbox Live verification disabled or adjusted in `server.properties` if you want to allow free access from classic 0.15.x customers.
+2. Place `CraftsmineNKM-1.0.0.jar` inside the `plugins/` folder of your **Nukkit-MOT** server.
+3. Start or restart the server to generate the configuration file at `plugins/CraftsmineNKM/config.yml`.
+4. Ensure strict version or Xbox Live verification is disabled or adjusted in `server.properties` if you wish to allow free access from classic 0.15.x clients.
 
 ---
 
-## Compilation from Source Code
+## Compilation from Source
 
 Requires **Java (JDK 17+)** and **Apache Maven**:
 
 ```bash
 mvn clean package
-````
+```
 
-The compiled artifact will be generated in:
-
-````
+The compiled artifact will be generated at:
+```text
 target/CraftsmineNKM-1.0.0.jar
-````
+```
 
-# Project Status and Notes
-- Optimized primarily for MCPE 0.15.10 (Protocol 84) in mini-game and Overworld environments.
-- It is recommended to restrict access to modern dimensions (such as the updated Nether) or use quick reappearance rules ([Fast Respawn] (https://cloudburstmc.org/resources/fastrespawn.261/)) to ensure maximum stability in low-income customers.
+---
 
-## Characteristics that cause Crash (Known)
-- Reappear
-- Open inventory
-- Some Entities
-- Dimensions unrelated to the main dimension (end, nether)
-## Missing features
-- Commands
-- Skins of other players
-- And more...
+## Project Status and Notes
+
+* Optimized primarily for **MCPE 0.15.10 (Protocol 84)** in minigame environments and Overworld worlds.
+* It is recommended to restrict access to modern dimensions (such as the updated Nether) or use *Fast Respawn* rules to ensure maximum stability on low-resource clients.
