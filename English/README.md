@@ -1,4 +1,4 @@
-# CraftsMineNKM
+# CraftsMineNKM (Beta)
 
 > *Previously known as **Barrel CraftsMine***
 
