@@ -1,76 +1,68 @@
 # CraftsMineNKM (Beta)
 
-> *Precedentemente conosciuto come **Barrel CraftsMine***
+> *Precedentemente noto come **Barrel CraftsMine***
 
-Plugin di traduzione del protocollo nativo per **Nukkit-MOT** che estende la compatibilità del server da **Protocol 113 (MCPE 11.0)** a **Protocol 80 (MCPE 0.15.0)**, consentendo ai classici client di Minecraft Pocket Edition di giocare insieme alle versioni moderne senza la necessità di proxy esterni e con zero overhead per i client nativi (`>=1.1.0`).
+Un plugin nativo di traduzione dei protocolli per **Nukkit-MOT** che estende la compatibilità del server dal **Protocollo 113 (MCPE 1.1.0)** fino al **Protocollo 80 (MCPE 0.15.0)**, consentendo ai client classici di Minecraft Pocket Edition di giocare insieme alle versioni moderne senza proxy esterni e con zero sovraccarico per i client nativi (`>= 1.1.0`).
 
 ---
 
-## Storia e architettura
+## Storia e Architettura
 
-Originariamente concepito come proxy autonomo (**Barrel CraftsMine**), il progetto si è evoluto in un'architettura nativa **100% come plugin per Nukkit-MOT**. Quando si esegue direttamente sullo stack di rete e sul motore del mondo del server, elimina la doppia serializzazione di RakNet, riduce la latenza e garantisce sessioni stabili ideali per lobby, mini-giochi (TNT Run, TNT Tag, Parkour) e server multiversione.
+Originariamente concepito come un proxy indipendente (**Barrel CraftsMine**), il progetto si è evoluto in un'architettura **100% nativa come plugin per Nukkit-MOT**. Eseguendosi direttamente sullo stack di rete e sul motore di gioco del server, elimina la doppia serializzazione di RakNet, riduce la latenza e garantisce sessioni stabili, ideali per lobby, minigiochi (TNT Run, TNT Tag, Parkour) e server multiversione.
 
-### Crediti e riferimenti tecnici
-**Sviluppo e architettura:** Programma Creators (Trollhunters501) assistito da agenti di ingegneria del codice in **Google AI Studio**.
-**Reverse Engineering and Protocol Reference:** In base alla struttura del pacchetto e alla mappatura di rete di [MySoft-0.15.x-1.21.x](https://github.com/Dr1xyDev/MySoft-0.15.x-1.21.x) (codice di riferimento PocketMine) e specifiche del protocollo legacy MCPE.
+### Crediti e Riferimenti Tecnici
+* **Sviluppo e Architettura:** Creadores Program (Trollhunters501) assistito da agenti di ingegneria del codice su **Google AI Studio**.
+* **Reverse Engineering e Riferimento del Protocollo:** Basato sulle strutture dei pacchetti e sulle mappature di rete di [MySoft-0.15.x-1.21.x](https://github.com/Dr1xyDev/MySoft-0.15.x-1.21.x) (codice di riferimento di PocketMine multiversione) e sulle specifiche dei protocolli legacy di MCPE.
 
 ---
 
 ## Protocolli Supportati (80 – 113+)
 
-| Protocollo | Versione MCPE | RakNet | Strategia di traduzione |
-|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| `80 - 84` | `0.15.0` – `0.15.10` | | `v7` | Codifica fissa (BE/LE), senza Varinti, pezzi di 128 colonne, bypass ResourcePacks e remapping di blocchi/biome legacy |
-| `90 - 91` | `0.15.90` – `0.17.0` | `v8` | | Iniziali di Varinti, ID `PacketsIds91`, pezzi con ordini classici e biomi ARGB |
-| `92 - 101` | `1.0.0` – `1.0.4.0` | | `v8` | SubChunks XZY, IDs `PacketsIds100`, `BatchPacket` con prefisso `0x06` |
-| `102 - 107` | `1.0.4` – `1.0.9` | | IDs `PacketsIds102` / `PacketsIds105`, `LoginPacket` tablet |
-| `110 - 112` | `1.1.0.0` – `1.1.0.9` | | | | | | | IDs `PacketsIds110`, adattamento di `MovePlayerPacket` (`ridingEid`) |
-| `113+` | `1.1.0` – `1.26.x` | `v8-v11` | **Nukkit-MOT** Nativo (disaccoppiamento automatico senza impatto sulle prestazioni) |
+| Protocollo | Versione MCPE | RakNet | Strategia di Traduzione |
+|------------|---------------|--------|-------------------------|
+| `80 - 84` | `0.15.0` – `0.15.10` | `v7` | Codifica fissa (BE/LE), nessun VarInt, chunk a 128 colonne, bypass dei ResourcePack e rimappatura di blocchi/biomi legacy |
+| `90 - 91` | `0.15.90` – `0.17.0` | `v8` | VarInt iniziali, ID `PacketsIds91`, chunk con ordinamento classico e biomi ARGB |
+| `92 - 101` | `1.0.0` – `1.0.4.0` | `v8` | SubChunk XZY, ID `PacketsIds100`, `BatchPacket` con prefisso `0x06` |
+| `102 - 107` | `1.0.4` – `1.0.9` | `v8` | ID `PacketsIds102` / `PacketsIds105`, `LoginPacket` compresso |
+| `110 - 112` | `1.1.0.0` – `1.1.0.9` | `v8` | ID `PacketsIds110`, adattamento di `MovePlayerPacket` (`ridingEid`) |
+| `113+` | `1.1.0` – `1.26.x` | `v8-v11` | **Gestito nativamente da Nukkit-MOT** (disaccoppiamento automatico senza impatto sulle prestazioni) |
 
 ---
 
-## Caratteristiche principali
+## Caratteristiche Principali
 
-***Real Time StraightBridge:** Intercettare e tradurre pacchetti in entrata e in uscita solo per i giocatori collegati da versioni legacy (`< 113`), lasciando intatto il flusso dei giocatori moderni.
-* **Chunks e adattamento mondiale:** Conversione automatica dei moderni sottogruppi in formato flat block e biome supportato da MCPE 0.15.x, rimappatura degli ID del blocco dopo 0,15 per evitare chiusure forzate nel client.
-* **Chat e compatibilità dei comandi legacy:** Traduzione di messaggi bidirezionali e esecuzione trasparente dei comandi inviati in formato testo normale dai client 0.15.x.
-* **Contestazioni centralizzate:** Controllo totale del comportamento del ponte, diagnosi dei pacchetti e impostazioni di compatibilità da `config.yml`.
+* **Ponte Diretto in Tempo Reale:** Intercetta e traduce i pacchetti in entrata e in uscita esclusivamente per i client legacy (`< 113`), lasciando completamente intatto il flusso di dati per i giocatori moderni.
+* **Adattamento di Chunk e Mondo:** Conversione automatica dei subchunk moderni nel formato piatto di blocchi e biomi supportato da MCPE 0.15.x, rimappando gli ID dei blocchi successivi alla 0.15 per evitare crash del client.
+* **Compatibilità Chat e Comandi Legacy:** Traduzione bidirezionale dei messaggi ed esecuzione trasparente dei comandi inviati in formato testo semplice dai client 0.15.x.
+* **Configurazione Centralizzata:** Controllo completo sul comportamento del ponte, diagnostica dei pacchetti e impostazioni di compatibilità direttamente dal file `config.yml`.
 
 ---
 
 ## Installazione
 
-1. Scarica o compila il file plugin `.jar`.
-2. Posizionare `CraftsmineNKM-1.0.0.jar` all'interno della cartella `plugins/` del server **Nukkit-MOT**.
-3. Avviare o riavviare il server per generare il file di configurazione `plugins/CraftsmineNKM/config.yml`.
-4. Assicurati di avere una rigorosa verifica di versione/Xbox Live disabilitata o regolata in `server.properties` se vuoi consentire l'accesso gratuito dai clienti classici 0.15.x.
+1. Scarica o compila il file `.jar` del plugin.
+2. Posiziona `CraftsmineNKM-1.0.0.jar` all'interno della cartella `plugins/` del tuo server **Nukkit-MOT**.
+3. Avvia o riavvia il server per generare il file di configurazione in `plugins/CraftsmineNKM/config.yml`.
+4. Assicurati che la verifica rigorosa della versione o di Xbox Live sia disattivata o regolata in `server.properties` se desideri consentire il libero accesso dai client classici 0.15.x.
 
 ---
 
-## Compilazione dal codice sorgente
+## Compilazione dal Codice Sorgente
 
 Richiede **Java (JDK 17+)** e **Apache Maven**:
 
 ```bash
-pacchetto pulito mvn
-````
+mvn clean package
+```
 
-L'artefatto compilato sarà generato in:
-
-````
+L'artefatto compilato verrà generato in:
+```text
 target/CraftsmineNKM-1.0.0.jar
-````
+```
 
-# Stato del progetto e note
-- Ottimizzato principalmente per MCPE 0.15.10 (Protocol 84) in ambienti di mini-gioco e Overworld.
-- Si consiglia di limitare l'accesso alle dimensioni moderne (come il Nether aggiornato) o utilizzare regole di ricomparsa rapida ([Fast Respawn] (https://cloudburstmc.org/resources/fastrespawn.261/)) per garantire la massima stabilità nei clienti a basso reddito.
+---
 
-## Caratteristiche che causano Crash (noto)
-- Riapparire
-- inventario aperto
-- Alcune Entità
-- Dimensioni non correlate alla dimensione principale (fine, né né)
-## Caratteristiche mancanti
-- Comandi
-- Skin di altri giocatori
-- E di più...
+## Stato del Progetto e Note
+
+* Ottimizzato principalmente per **MCPE 0.15.10 (Protocollo 84)** in ambienti minigame e mondi Overworld.
+* Si consiglia di limitare l'accesso alle dimensioni moderne (come il Nether aggiornato) o di utilizzare regole di rientro rapido (*Fast Respawn*) per garantire la massima stabilità sui client con risorse limitate.
