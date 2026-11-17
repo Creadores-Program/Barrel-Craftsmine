@@ -33,9 +33,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: CraftsMine Plugin
-          path: target/CraftsMineNKM-1.0.0.jar
+          path: target/CraftsmineNKM-1.0.0.jar
       - name: Attach Jar to GitHub Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          files: target/CraftsMineNKM-1.0.0.jar
+          files: target/CraftsmineNKM-1.0.0.jar
