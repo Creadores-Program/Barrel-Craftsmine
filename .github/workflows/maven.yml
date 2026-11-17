@@ -1,6 +1,17 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - 'README.md'
+      - '.github/images/**'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - '.github/images/**'
+  release:
+    types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,5 +32,10 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: CraftsMine Proyect
+          name: CraftsMine Plugin
           path: target/CraftsMineNKM-1.0.0.jar
+      - name: Attach Jar to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: target/CraftsMineNKM-1.0.0.jar

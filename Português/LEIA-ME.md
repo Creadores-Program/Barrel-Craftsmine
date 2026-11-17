@@ -1,147 +1,76 @@
-# CraftsMine (TEP)
-Bem-vindo a este projeto que fez o impossível 😉! Imagine um servidor compatível com Minecraft Pocket ou como alguns chamam, Craftsman com Minecraft Bedrock!
+# ArtesanatoMineNKM (Beta)
 
-Muitos me disseram que era impossível, mas você me conhece, então aceitei o desafio e aqui estou!
+> *Anteriormente conhecido como **Barrel CraftsMine***
 
-**ESTE É O PRIMEIRO SOFTWARE QUE PERMITE QUE JOGADORES DE MINECRAFT POCKET (0.15.x) ENTREM EM SERVIDORES MINECRAFT BEDROCK (1.7.0)!!**
+Plugin de tradução de protocolo nativo para **Nukkit-MOT** estendendo a compatibilidade do servidor de **Protocolo 113 (MCPE 1.1.0)** para **Protocolo 80 (MCPE 0.15.0)**, permitindo que os clientes clássicos do Minecraft Pocket Edition joguem ao lado de versões modernas sem a necessidade de proxies externos e com zero sobrecarga para clientes nativos (`>=1.1.0`).
 
-## Requisitos:
-- Java 8 ou superior instalado.
-- Maven instalado.
-- Conexão à Internet.
-- A porta que você usará para abrir o servidor deve estar aberta.
+----
 
-## O que é isso??...
-Isto é um **SOFTWARE**. Não é um **plugin** para nenhum software de servidor Minecraft.
+## História e Arquitetura
 
-## Como Conseguir?
-Basta ir em Releases e baixar o jar que você mais gosta!
+Originalmente concebido como um proxy autônomo (**Barrel CraftsMine**), o projeto evoluiu para uma arquitetura nativa de ** 100% como um plugin para Nukkit-MOT**. Ao ser executado diretamente na pilha de rede e no motor do mundo do servidor, elimina a dupla serialização do RakNet, reduz a latência e garante sessões estáveis ideais para lobbies, mini-jogos (TNT Run, TNT Tag, Parkour) e servidores multiversão.
 
-## Como Funciona?
-Este proxy traduz os datapacks do Minecraft Pocket para Minecraft Bedrock e vice-versa, algo assim:
+### Créditos e Referências Técnicas
+**Desenvolvimento e Arquitetura:** Programa de Criadores (Trollhunters501) assistido por agentes de engenharia de código em **Google AI Studio**.
+**Reverse Engineering and Protocol Reference:** Baseado na estrutura do pacote e no mapeamento de rede de [MySoft-0.15.x-1.21.x](https://github.com/Dr1xyDev/MySoft-0.15.x-1.21.x) (Código de referência PocketMine) e especificações de protocolo legado MCPE.
 
-MCPE -> CraftsMine Proxy Tradutor -> Servidor Minecraft Bedrock.
+----
 
-Servidor Minecraft Bedrock -> CraftsMine Proxy Tradutor -> MCPE
+Protocolos ## Suportados (80 – 113+)
 
-**Lembre-se de que este software envia o jogador do Minecraft Pocket como Minecraft Bedrock 1.7!**
+| Protocolo | Versão MCPE | RakNet | Estratégia de tradução |
+|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| `80 - 84` | `0.15.0` – `0.15.10` | | | `v7` | | Codificação fixa (BE/LE), sem VarInts, pedaços de 128 colunas, bypass ResourcePacks e remapeamento de bloco/biome legado |
+| `90 - 91` | `0.15.90` – `0.17.0` | `.17.0` | | Varints iniciais, IDs `PacketsIds91`, pedaços com ordenação clássica e biomas ARGB |
+| `92 - 101` | `1.0.0` – `1.0.4.0` | | | `v8` | | SubChunks XZY, IDs `PacketsIds100`, `BatchPacket` com prefixo `0x06` |
+| `102 - 107` | `1.0.4` – `1.0.9` | | `.0.9` | | IDs `PacketsIds102` / `PacketsIds105`, `LoginPacket` tablet |
+| `110 - 112` | `1.1.0.0` – `1.1.0.9` | | | | | | | | | IDs `PacketsIds110`, adaptação de `MovePlayerPacket` (`ridingEid`) |
+| `113+` | `1.1.0` – `1.26.x` | | **Nukkit-MOT** Nativo (desacoplamento automático sem impacto de desempenho) |
 
-## O que Funciona?
-Aqui está uma lista de coisas que funcionam neste **Software**!
+----
 
-**----------------------------------**
+## Principais Características
 
-✔️ **Funciona Bem**
+***Real Time StraightBridge:** Interceptar e traduzir pacotes de entrada e saída apenas para jogadores conectados a partir de versões (`< 113` legadas), deixando o fluxo de jogadores modernos intactos.
+* **Chunks e adaptação mundial:** Conversão automática de subpedrões modernos para bloco plano e formato de biomame suportado pelo MCPE 0.15.x, remapeando IDs de bloco após 0,15 para evitar fechamentos forçados no cliente.
+**Compatibilidade com comandos de bate-papo e legado:** tradução de mensagens bidirecionais e execução transparente de comandos enviados em formato de texto simples a partir de clientes 0.15.x.
+* **Configurações centralizadas:** Controle de comportamento de ponte total, diagnóstico de pacotes e configurações de compatibilidade de `config.yml`.
 
-❕ **Funciona com Bugs**
+----
 
-❌ **Não Funciona**
+## Instalação
 
-**----------------------------------**
+1. 1. Baixe ou compile o arquivo do plugin `.jar`.
+2. 2. Coloque `CraftsmineNKM-1.0.0.jar` dentro da pasta `plugins/` do seu servidor **Nukkit-MOT**.
+3. Inicie ou reinicie o servidor para gerar o arquivo de configuração `plugins/CraftsmineNKM/config.yml`.
+4. 4. Certifique-se de ter a versão rigorosa / Xbox Live desativada ou ajustada em `server.properties` se você quiser permitir o acesso gratuito de clientes clássicos 0.15.x.
 
-  - ✔️ Sons
-  - ✔️ Login de Datapackets do Servidor (Handshake)
-  - ✔️ Skin
-  - ✔️ Chat
-  - ✔️ Comandos
-  - ✔️ Spawn do Jogador
-  - ✔️ Tempo
-  - ✔️ Clima
-  - ✔️ Mudança de modo de jogo (Sobrevivência, Criativo, Aventura e Espectador)
-  - ✔️ Placar
-  - ✔️ Barras de chefe
-  - ❕ Efeito de Posição
-  - ❕ Animações
-  - ❕ Partículas
-  - ❕ Lista de Jogadores
-  - ❕ Interação do Jogador
-  - ❕ Vida do Jogador
-  - ❕ Fome do Jogador
-  - ❕ Respawn
-  - ❕ Multi Mundo
-  - ❕ PVP
-  - ❌ Autenticação Xbox
-  - ❌ Geração de Terreno
-  - ❌ Movimento
-  - ❌ Entidades (incluindo jogadores)
-  - ❌ Inventário
-  - ❌ Níveis
-  - ❌ UI/Formulários
+----
 
-  E mais...
+## Compilação do Código Fonte
 
-## Versões Testadas do MCPE:
-MCPE 0.15.0 até MCPE 0.15.10
+Requer **Java (JDK 17+)** e **Apache Maven**:
 
-## Como Instalar:
-Basta colocar o arquivo jar como inicializador do programa, por exemplo, em um painel Pterodactyl, basta colocá-lo no diretório principal e renomeá-lo para **server.jar** ou qualquer que seja o nome do arquivo jar que **inicia o servidor**! Lembre-se de que o programa está escrito em **Java**!
+```bash
+mvn pacote limpo
+`````
 
-Para permitir que jogadores do Minecraft Pocket se juntem aos jogadores do Minecraft Bedrock 1.21 ou a versão atual, você pode usar [Nukkit PetteriM1 Edition](https://github.com/PetteriM1/NukkitPetteriM1Edition/)
+O artefato compilado será gerado em:
 
-## Configuração:
-A configuração está no diretório principal do servidor, é o arquivo config.yml (lembre-se de ligar e desligar o servidor para gerar a configuração!)
+`````
+alvo/CraftsmineNKM-1.0.0.jar
+`````
 
-#### bindAddress
-Este é o IP onde o servidor CraftsMine abre (na maioria das vezes não é necessário modificar).
+# Status do Projeto e Notas
+- Otimizado principalmente para MCPE 0.15.10 (Protocolo 84) em ambientes de mini-jogo e Overworld.
+- Recomenda-se restringir o acesso a dimensões modernas (como o Nether atualizado) ou usar regras de reaparecimento rápido ([Fast Respawn] (https://cloudburstmc.org/resources/fastrespawn.261/)) para garantir a máxima estabilidade em clientes de baixa renda.
 
-#### port
-Esta é a porta onde o servidor CraftsMine abre.
-
-#### motd
-Esta é a mensagem do dia que o servidor CraftsMine mostrará.
-
-#### submotd
-Esta é a sub-mensagem do dia que aparece abaixo do motd quando o CraftsMine está em LAN.
-
-#### maxplayers
-Este é o número máximo de jogadores que o servidor CraftsMine aceita.
-
-#### shutdownMessage
-Esta é a mensagem que mostra quando o proxy é desligado.
-
-#### bedrockAddress
-Este é o IP do servidor de destino Minecraft Bedrock.
-
-#### bedrockPort
-Esta é a porta do servidor de destino Minecraft Bedrock.
-
-#### debug
-Se ativado, envia mensagens de debug para o console.
-
-#### gcCollectionDiconnectPlayer
-Se ativado, libera memória toda vez que um jogador se desconecta do servidor.
-
-#### consoleLog
-Se habilitado, gere um arquivo console.log
-
-#### gcCollectionAuto
-Se ativado, libera memória a cada ciclo gcCollectionTime
-
-#### gcCollectionTime
-tempo em milissegundos para o ciclo gcCollectionAuto
-
-#### langPlayer
-código de idioma a ser usado para jogadores 0.15.x
-
-#### synchServer
-sincronizar motd e jogadores com o proxy
-
-#### timeSynchServer
-tempo em milissegundos para atualizar o synchServer (também sincronizado quando um jogador entra no proxy)
-
-#### versionBedrockServer
-escolha a versão do Minecraft Bedrock (1.7, 1.8, 1.9 ou 1.10)
-
-
-## Apoiar o Projeto
-
-Se você quiser apoiar o projeto, pode fazer uma doação neste [link](https://creadoresgames.blogspot.com/p/donaciones.html) via transferência bancária ou PayPal!
-Muito obrigado ☺️
-
-## Créditos:
-
-  - [Barrel CREA Edition](https://github.com/Trollhunters501/Barrel-CREA-Edition/)
-  - [MBNukkit](https://github.com/Trollhunters501/MBNukkit/)
-  - [DragonProxy](https://github.com/robske110/DragonProxy/)
-  - [Protocol Cloudburstmc](https://github.com/CloudburstMC/Protocol/)
-  - [BedrockServerQuery](https://github.com/justin-eckenweber/BedrockServerQuery)
+## Características que causam Crash (Conhecido)
+- Reaparecer
+- Inventário aberto
+- Algumas Entidades
+- Dimensões não relacionadas à dimensão principal (fim, internet)
+## Recursos ausentes
+- Comandos
+- Skins de outros jogadores
+- E mais...
