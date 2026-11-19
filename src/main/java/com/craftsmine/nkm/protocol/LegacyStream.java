@@ -206,10 +206,6 @@ public final class LegacyStream {
         if (protocol.isBefore90()) {
             return readLongBE();
         }
-        if (protocol == LegacyProtocol.PROTOCOL_113) {
-            // Nukkit-MOT DataPacket (< v1_2_0) usa UnsignedVarInt para Unique/Runtime IDs
-            return (long) readVarIntUnsignedCompat();
-        }
         return readVarLong();
     }
 
@@ -217,14 +213,7 @@ public final class LegacyStream {
         if (protocol.isBefore90()) {
             return readLongBE();
         }
-        if (protocol == LegacyProtocol.PROTOCOL_113) {
-            return (long) readVarIntUnsignedCompat() & 0xFFFFFFFFL;
-        }
         return readUnsignedVarLong();
-    }
-
-    private int readVarIntUnsignedCompat() {
-        return readUnsignedVarInt();
     }
 
     public int[] readBlockPosition(LegacyProtocol protocol) {
@@ -257,7 +246,7 @@ public final class LegacyStream {
         }
         int slotStartPos = inPos;
         int id = protocol.isBefore90() ? (short) readShortBE() : readVarInt();
-        if (id <= 0) {
+        if (protocol.isBefore90() ? id <= 0 : id == 0) {
             return LegacySlot.AIR;
         }
         int count;
@@ -440,8 +429,6 @@ public final class LegacyStream {
     public void writeEntityUniqueId(LegacyProtocol protocol, long eid) {
         if (protocol.isBefore90()) {
             writeLongBE(eid);
-        } else if (protocol == LegacyProtocol.PROTOCOL_113) {
-            writeUnsignedVarInt((int) eid);
         } else {
             writeVarLong(eid);
         }
@@ -450,8 +437,6 @@ public final class LegacyStream {
     public void writeEntityRuntimeId(LegacyProtocol protocol, long eid) {
         if (protocol.isBefore90()) {
             writeLongBE(eid);
-        } else if (protocol == LegacyProtocol.PROTOCOL_113) {
-            writeUnsignedVarInt((int) eid);
         } else {
             writeUnsignedVarLong(eid);
         }

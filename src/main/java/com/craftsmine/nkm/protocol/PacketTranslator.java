@@ -1,10 +1,18 @@
 package com.craftsmine.nkm.protocol;
 
+import cn.nukkit.Player;
+import cn.nukkit.Server;
+import cn.nukkit.entity.data.Skin;
 import cn.nukkit.network.protocol.v113.ProtocolInfo_v113;
+import com.craftsmine.nkm.network.SessionProtocolRegistry;
+import com.craftsmine.nkm.network.SessionProtocolRegistry.EntitySpawnInfo;
+import com.craftsmine.nkm.network.SessionProtocolRegistry.LegacySessionState;
+import com.craftsmine.nkm.network.SessionProtocolRegistry.SkinSnapshot;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.zip.DataFormatException;
 
@@ -99,6 +107,13 @@ public final class PacketTranslator {
      * Traduce un sub-paquete entrante desde el protocolo legado hacia v113 canonico.
      */
     public static InboundResult translateInbound(byte[] rawPacket, LegacyProtocol source) {
+        return translateInbound(rawPacket, source, null);
+    }
+
+    /**
+     * Traduce un sub-paquete entrante desde el protocolo legado hacia v113 canonico con contexto de sesion.
+     */
+    public static InboundResult translateInbound(byte[] rawPacket, LegacyProtocol source, LegacySessionState state) {
         if (rawPacket == null || rawPacket.length == 0) {
             return InboundResult.drop();
         }
@@ -109,6 +124,20 @@ public final class PacketTranslator {
         }
 
         byte[] payload = java.util.Arrays.copyOfRange(rawPacket, 1, rawPacket.length);
+
+        // En 0.15.x (< 90), los comandos "/" y "./" se envian en TextPacket tipo CHAT -> CommandStepPacket_v113 (0x4f)
+        if ((v113Id & 0xFF) == 0x09 && source.isBefore90()) {
+            InboundResult cmdStep = tryTranslatePre90CommandTextInbound(payload, source);
+            if (cmdStep != null) {
+                return cmdStep;
+            }
+        }
+
+        // En 0.15.x (< 90), RespawnPacket del cliente solicita reaparicion (Nukkit < 388 lo ignora -> usar PlayerAction ACTION_RESPAWN=7)
+        if ((v113Id & 0xFF) == 0x2d && source.isBefore90()) {
+            return InboundResult.forward(buildPre90RespawnActionPacket(state));
+        }
+
         byte[] translatedPayload = switch (v113Id & 0xFF) {
             case 0x09 -> translateTextInbound(payload, source);
             case 0x13 -> translateMovePlayerInbound(payload, source);
@@ -142,6 +171,19 @@ public final class PacketTranslator {
      * Traduce un sub-paquete saliente desde v113 canonico hacia el protocolo del cliente legado.
      */
     public static OutboundResult translateOutbound(byte[] v113Packet, LegacyProtocol target, boolean bypassResourcePacks015) {
+        return translateOutbound(v113Packet, target, bypassResourcePacks015, null, null);
+    }
+
+    /**
+     * Traduce un sub-paquete saliente desde v113 canonico hacia el protocolo legado usando cache de skins y estado de sesion.
+     */
+    public static OutboundResult translateOutbound(
+            byte[] v113Packet,
+            LegacyProtocol target,
+            boolean bypassResourcePacks015,
+            SessionProtocolRegistry registry,
+            LegacySessionState state
+    ) {
         if (v113Packet == null || v113Packet.length == 0) {
             return OutboundResult.drop(false);
         }
@@ -158,10 +200,10 @@ public final class PacketTranslator {
 
         byte[] payload = java.util.Arrays.copyOfRange(v113Packet, 1, v113Packet.length);
 
-        // Paquetes con logica especial de supresion o puente entre tipos (ej: LevelSoundEvent -> LevelEvent en 0.15)
+        // Paquetes con logica especial de supresion o puente entre tipos
         switch (v113Id) {
             case 0x0d -> {
-                return translateAddEntityOutbound(payload, target);
+                return translateAddEntityOutbound(payload, target, state);
             }
             case 0x0f -> {
                 return translateAddItemEntityOutbound(payload, target);
@@ -173,10 +215,26 @@ public final class PacketTranslator {
                 return LegacyContentMapper.translateLevelEventOutbound(payload, target);
             }
             case 0x1c -> {
-                return LegacyContentMapper.translateEntityEventOutbound(payload, target);
+                EntitySpawnInfo spawnInfo = resolveEntitySpawnInfo(payload, state, true);
+                return LegacyContentMapper.translateEntityEventOutbound(payload, target, spawnInfo);
+            }
+            case 0x1d -> {
+                return translateMobEffectOutboundResult(payload, target);
             }
             case 0x29 -> {
                 return translateSetEntityLinkOutbound(payload, target);
+            }
+            case 0x31 -> {
+                // Evita reenviar inventarios modernos mal mapeados a 0x31 como ContainerClosePacket (1 byte)
+                if (payload.length > 1) {
+                    return OutboundResult.drop(false);
+                }
+            }
+            case 0x32 -> {
+                return translateContainerSetSlotOutboundResult(payload, target);
+            }
+            case 0x34 -> {
+                return translateContainerSetContentOutboundResult(payload, target);
             }
             case 0x38 -> {
                 return translateBlockEntityDataOutbound(payload, target);
@@ -202,9 +260,9 @@ public final class PacketTranslator {
             case 0x07 -> translateResourcePackStackOutbound(payload, target);
             case 0x09 -> translateTextOutbound(payload, target);
             case 0x0a -> translateSetTimeOutbound(payload, target);
-            case 0x0b -> translateStartGameOutbound(payload, target);
+            case 0x0b -> translateStartGameOutbound(payload, target, state);
             case 0x0c -> translateAddPlayerOutbound(payload, target);
-            case 0x0e -> translateRemoveEntityOutbound(payload, target);
+            case 0x0e -> translateRemoveEntityOutbound(payload, target, state);
             case 0x11 -> translateTakeItemEntityOutbound(payload, target);
             case 0x12 -> translateMoveEntityOutbound(payload, target);
             case 0x13 -> translateMovePlayerOutbound(payload, target);
@@ -212,12 +270,11 @@ public final class PacketTranslator {
             case 0x17 -> translateAddPaintingOutbound(payload, target);
             case 0x18 -> translateExplodeOutbound(payload, target);
             case 0x1b -> translateBlockEventOutbound(payload, target);
-            case 0x1d -> translateMobEffectOutbound(payload, target);
             case 0x1e -> translateUpdateAttributesOutbound(payload, target);
             case 0x1f -> translateMobEquipmentOutbound(payload, target);
             case 0x20 -> translateMobArmorOutbound(payload, target);
             case 0x26 -> translateHurtArmorOutbound(payload, target);
-            case 0x27 -> translateSetEntityDataOutbound(payload, target);
+            case 0x27 -> translateSetEntityDataOutbound(payload, target, state);
             case 0x28 -> translateSetEntityMotionOutbound(payload, target);
             case 0x2a -> translateSetHealthOutbound(payload, target);
             case 0x2b -> translateSetSpawnPositionOutbound(payload, target);
@@ -225,16 +282,19 @@ public final class PacketTranslator {
             case 0x2d -> translateRespawnOutbound(payload, target);
             case 0x30 -> translateContainerOpenOutbound(payload, target);
             case 0x31 -> translateContainerCloseOutbound(payload, target);
-            case 0x32 -> translateContainerSetSlotOutbound(payload, target);
             case 0x33 -> translateContainerSetDataOutbound(payload, target);
-            case 0x34 -> translateContainerSetContentOutbound(payload, target);
             case 0x35 -> translateCraftingDataOutbound(payload, target);
             case 0x37 -> translateAdventureSettingsOutbound(payload, target);
             case 0x3a -> ChunkTranslator.translateOutbound(payload, target);
             case 0x3c -> translateSetDifficultyOutbound(payload, target);
-            case 0x3d -> translateChangeDimensionOutbound(payload, target);
+            case 0x3d -> {
+                if (state != null) {
+                    state.clearEntities();
+                }
+                yield translateChangeDimensionOutbound(payload, target);
+            }
             case 0x3e -> translateSetPlayerGameTypeOutbound(payload, target);
-            case 0x3f -> translatePlayerListOutbound(payload, target);
+            case 0x3f -> translatePlayerListOutbound(payload, target, registry);
             case 0x42 -> translateSpawnExperienceOrbOutbound(payload, target);
             case 0x46 -> translateChunkRadiusUpdatedOutbound(payload, target);
             default -> payload;
@@ -244,6 +304,67 @@ public final class PacketTranslator {
         result[0] = (byte) (legacyId & 0xFF);
         System.arraycopy(translatedPayload, 0, result, 1, translatedPayload.length);
         return OutboundResult.forward(result);
+    }
+
+    private static EntitySpawnInfo resolveEntitySpawnInfo(byte[] v113Payload, LegacySessionState state, boolean runtimeId) {
+        if (state == null || v113Payload == null || v113Payload.length == 0) {
+            return null;
+        }
+        try {
+            LegacyStream r = LegacyStream.reader(v113Payload);
+            long eid = runtimeId
+                    ? r.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113)
+                    : r.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
+            return state.getEntity(eid);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static InboundResult tryTranslatePre90CommandTextInbound(byte[] payload, LegacyProtocol src) {
+        if (payload.length < 3) {
+            return null;
+        }
+        LegacyStream in = LegacyStream.reader(payload);
+        int type = in.readByte();
+        if (type != 1 || in.remaining() < 4) { // TYPE_CHAT
+            return null;
+        }
+        in.readString(src); // source
+        String message = in.readString(src);
+        if (message == null) {
+            return null;
+        }
+        String trimmed = message.trim();
+        if (!trimmed.startsWith("/") && !trimmed.startsWith("./")) {
+            return null;
+        }
+        String cmd = trimmed.startsWith("./") ? trimmed.substring(2).trim() : trimmed.substring(1).trim();
+        if (cmd.isEmpty()) {
+            return InboundResult.drop();
+        }
+        LegacyStream out = LegacyStream.writer(cmd.length() + 32);
+        out.writeByte(ProtocolInfo_v113.COMMAND_STEP_PACKET & 0xFF);
+        out.writeString(LegacyProtocol.PROTOCOL_113, cmd);
+        out.writeString(LegacyProtocol.PROTOCOL_113, "default");
+        out.writeUnsignedVarInt(0); // uvarint1
+        out.writeUnsignedVarInt(0); // currentStep
+        out.writeBoolean(true);     // done
+        out.writeUnsignedVarInt(0); // clientId
+        out.writeString(LegacyProtocol.PROTOCOL_113, "{}");
+        out.writeString(LegacyProtocol.PROTOCOL_113, "");
+        return InboundResult.forward(out.toByteArray());
+    }
+
+    private static byte[] buildPre90RespawnActionPacket(LegacySessionState state) {
+        long eid = (state != null && state.getPlayerEntityId() > 0) ? state.getPlayerEntityId() : 1L;
+        LegacyStream out = LegacyStream.writer(24);
+        out.writeByte(ProtocolInfo_v113.PLAYER_ACTION_PACKET & 0xFF);
+        out.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, eid);
+        out.writeVarInt(7); // PlayerActionPacket.ACTION_RESPAWN
+        out.writeBlockPosition(LegacyProtocol.PROTOCOL_113, 0, 0, 0);
+        out.writeVarInt(0);
+        return out.toByteArray();
     }
 
     // =========================================================================
@@ -651,10 +772,13 @@ public final class PacketTranslator {
         return out.toByteArray();
     }
 
-    private static byte[] translateStartGameOutbound(byte[] payload, LegacyProtocol dst) {
+    private static byte[] translateStartGameOutbound(byte[] payload, LegacyProtocol dst, LegacySessionState state) {
         LegacyStream in = LegacyStream.reader(payload);
         long entityUniqueId = in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
         long entityRuntimeId = in.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113);
+        if (state != null) {
+            state.setPlayerEntityId(entityRuntimeId);
+        }
         int playerGamemode = in.readVarInt();
         float[] pos = in.readVector3(LegacyProtocol.PROTOCOL_113);
         float pitch = in.readFloatLE();
@@ -789,7 +913,7 @@ public final class PacketTranslator {
         return out.toByteArray();
     }
 
-    private static OutboundResult translateAddEntityOutbound(byte[] payload, LegacyProtocol dst) {
+    private static OutboundResult translateAddEntityOutbound(byte[] payload, LegacyProtocol dst, LegacySessionState state) {
         int legacyId = PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.ADD_ENTITY_PACKET & 0xFF);
         if (legacyId == PacketIdMapper.UNMAPPED) {
             return OutboundResult.drop(false);
@@ -802,6 +926,13 @@ public final class PacketTranslator {
         if (mappedType < 0) {
             return OutboundResult.drop(false);
         }
+        EntitySpawnInfo spawnInfo = new EntitySpawnInfo(rawType, mappedType);
+        if (state != null) {
+            state.trackEntity(eidRuntime, rawType, mappedType);
+            if (eidUnique != eidRuntime) {
+                state.trackEntity(eidUnique, rawType, mappedType);
+            }
+        }
         float[] pos = in.readVector3(LegacyProtocol.PROTOCOL_113);
         float[] motion = in.readVector3(LegacyProtocol.PROTOCOL_113);
         float pitch = in.readFloatLE();
@@ -811,14 +942,17 @@ public final class PacketTranslator {
         record AttrEntry(String name, float min, float max, float val) {
         }
         List<AttrEntry> attrs = new ArrayList<>(attrCount);
-        for (int i = 0; i < attrCount; i++) {
-            String name = in.readString(LegacyProtocol.PROTOCOL_113);
+        for (int i = 0; i < attrCount && in.remaining() > 0; i++) {
+            String rawName = in.readString(LegacyProtocol.PROTOCOL_113);
             float min = in.readFloatLE();
             float val = in.readFloatLE();
             float max = in.readFloatLE();
-            attrs.add(new AttrEntry(name, min, max, val));
+            String mappedName = LegacyContentMapper.mapAttributeNameOutbound(rawName, dst);
+            if (mappedName != null) {
+                attrs.add(new AttrEntry(mappedName, min, max, val));
+            }
         }
-        byte[] meta = LegacyContentMapper.translateMetadataOutbound(in, dst);
+        byte[] meta = LegacyContentMapper.translateMetadataOutbound(in, dst, spawnInfo);
 
         LegacyStream out = LegacyStream.writer(128);
         out.writeByte(legacyId & 0xFF);
@@ -831,7 +965,7 @@ public final class PacketTranslator {
             out.writeVector3(dst, motion[0], motion[1], motion[2]);
             out.writeFloatBE(yaw);
             out.writeFloatBE(pitch);
-            out.writeIntBE(0); // modifiers (faltaba anteriormente -> causaba corrupcion de metadata y crashes en 0.15.10)
+            out.writeIntBE(0);
             out.writeBytes(meta);
             out.writeShortBE(0);
             return OutboundResult.forward(out.toByteArray());
@@ -856,9 +990,12 @@ public final class PacketTranslator {
         return OutboundResult.forward(out.toByteArray());
     }
 
-    private static byte[] translateRemoveEntityOutbound(byte[] payload, LegacyProtocol dst) {
+    private static byte[] translateRemoveEntityOutbound(byte[] payload, LegacyProtocol dst, LegacySessionState state) {
         LegacyStream in = LegacyStream.reader(payload);
         long eid = in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
+        if (state != null) {
+            state.removeEntity(eid);
+        }
         LegacyStream out = LegacyStream.writer(12);
         out.writeEntityUniqueId(dst, eid);
         return out.toByteArray();
@@ -1063,7 +1200,11 @@ public final class PacketTranslator {
         return out.toByteArray();
     }
 
-    private static byte[] translateMobEffectOutbound(byte[] payload, LegacyProtocol dst) {
+    private static OutboundResult translateMobEffectOutboundResult(byte[] payload, LegacyProtocol dst) {
+        int legacyId = PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.MOB_EFFECT_PACKET & 0xFF);
+        if (legacyId == PacketIdMapper.UNMAPPED) {
+            return OutboundResult.drop(false);
+        }
         LegacyStream in = LegacyStream.reader(payload);
         long eid = in.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113);
         int eventId = in.readByte();
@@ -1072,24 +1213,26 @@ public final class PacketTranslator {
         boolean particles = in.readBoolean();
         int duration = in.readVarInt();
 
+        if (effectId <= 0 || (dst.isBefore90() && effectId > 23) || effectId > 24) {
+            return OutboundResult.drop(false);
+        }
+
+        LegacyStream out = LegacyStream.writer(24);
+        out.writeByte(legacyId & 0xFF);
+        out.writeEntityRuntimeId(dst, eid);
+        out.writeByte(eventId);
         if (!dst.isBefore90()) {
-            LegacyStream out = LegacyStream.writer(24);
-            out.writeEntityRuntimeId(dst, eid);
-            out.writeByte(eventId);
-            out.writeVarInt(Math.min(24, effectId));
+            out.writeVarInt(effectId);
             out.writeVarInt(amplifier);
             out.writeBoolean(particles);
             out.writeVarInt(duration);
-            return out.toByteArray();
+        } else {
+            out.writeByte(effectId);
+            out.writeByte(amplifier);
+            out.writeBoolean(particles);
+            out.writeIntBE(duration);
         }
-        LegacyStream out = LegacyStream.writer(24);
-        out.writeEntityRuntimeId(dst, eid);
-        out.writeByte(eventId);
-        out.writeByte(Math.min(23, Math.max(0, effectId)));
-        out.writeByte(amplifier);
-        out.writeBoolean(particles);
-        out.writeIntBE(duration);
-        return out.toByteArray();
+        return OutboundResult.forward(out.toByteArray());
     }
 
     private static byte[] translateUpdateAttributesOutbound(byte[] payload, LegacyProtocol dst) {
@@ -1097,33 +1240,43 @@ public final class PacketTranslator {
         long eid = in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
         int count = in.readUnsignedVarInt();
 
-        if (!dst.isBefore90()) {
-            LegacyStream out = LegacyStream.writer(payload.length + 8);
-            out.writeEntityRuntimeId(dst, eid);
-            out.writeUnsignedVarInt(count);
-            for (int i = 0; i < count && in.remaining() > 0; i++) {
-                out.writeFloatLE(in.readFloatLE());
-                out.writeFloatLE(in.readFloatLE());
-                out.writeFloatLE(in.readFloatLE());
-                out.writeFloatLE(in.readFloatLE());
-                out.writeString(dst, in.readString(LegacyProtocol.PROTOCOL_113));
-            }
-            return out.toByteArray();
+        record AttrValue(float min, float max, float current, float defVal, String name) {
         }
-
-        LegacyStream out = LegacyStream.writer(32 + count * 24);
-        out.writeEntityRuntimeId(dst, eid);
-        out.writeShortBE(count);
+        List<AttrValue> mapped = new ArrayList<>(count);
         for (int i = 0; i < count && in.remaining() > 0; i++) {
             float min = in.readFloatLE();
             float max = in.readFloatLE();
             float current = in.readFloatLE();
-            in.readFloatLE();
-            String name = in.readString(LegacyProtocol.PROTOCOL_113);
-            out.writeFloatBE(min);
-            out.writeFloatBE(max);
-            out.writeFloatBE(current);
-            out.writeString(dst, name);
+            float defVal = in.readFloatLE();
+            String rawName = in.readString(LegacyProtocol.PROTOCOL_113);
+            String name = LegacyContentMapper.mapAttributeNameOutbound(rawName, dst);
+            if (name != null) {
+                mapped.add(new AttrValue(min, max, current, defVal, name));
+            }
+        }
+
+        if (!dst.isBefore90()) {
+            LegacyStream out = LegacyStream.writer(payload.length + 8);
+            out.writeEntityRuntimeId(dst, eid);
+            out.writeUnsignedVarInt(mapped.size());
+            for (AttrValue a : mapped) {
+                out.writeFloatLE(a.min());
+                out.writeFloatLE(a.max());
+                out.writeFloatLE(a.current());
+                out.writeFloatLE(a.defVal());
+                out.writeString(dst, a.name());
+            }
+            return out.toByteArray();
+        }
+
+        LegacyStream out = LegacyStream.writer(32 + mapped.size() * 24);
+        out.writeEntityRuntimeId(dst, eid);
+        out.writeShortBE(mapped.size());
+        for (AttrValue a : mapped) {
+            out.writeFloatBE(a.min());
+            out.writeFloatBE(a.max());
+            out.writeFloatBE(a.current());
+            out.writeString(dst, a.name());
         }
         return out.toByteArray();
     }
@@ -1169,12 +1322,13 @@ public final class PacketTranslator {
         return out.toByteArray();
     }
 
-    private static byte[] translateSetEntityDataOutbound(byte[] payload, LegacyProtocol dst) {
+    private static byte[] translateSetEntityDataOutbound(byte[] payload, LegacyProtocol dst, LegacySessionState state) {
         LegacyStream in = LegacyStream.reader(payload);
         long eid = in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
+        EntitySpawnInfo spawnInfo = state != null ? state.getEntity(eid) : null;
         LegacyStream out = LegacyStream.writer(64);
         out.writeEntityRuntimeId(dst, eid);
-        out.writeBytes(LegacyContentMapper.translateMetadataOutbound(in, dst));
+        out.writeBytes(LegacyContentMapper.translateMetadataOutbound(in, dst, spawnInfo));
         return out.toByteArray();
     }
 
@@ -1312,15 +1466,23 @@ public final class PacketTranslator {
         return payload;
     }
 
-    private static byte[] translateContainerSetSlotOutbound(byte[] payload, LegacyProtocol dst) {
+    private static OutboundResult translateContainerSetSlotOutboundResult(byte[] payload, LegacyProtocol dst) {
+        int legacyId = PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.CONTAINER_SET_SLOT_PACKET & 0xFF);
+        if (legacyId == PacketIdMapper.UNMAPPED) {
+            return OutboundResult.drop(false);
+        }
         LegacyStream in = LegacyStream.reader(payload);
         int windowId = in.readByte();
+        if ((dst.isBefore110() && windowId == 119) || windowId == 124 || windowId >= 122) {
+            return OutboundResult.drop(false);
+        }
         int slot = in.readVarInt();
         int hotbar = in.readVarInt();
         LegacyStream.LegacySlot item = LegacyContentMapper.mapSlotOutbound(in.readSlot(LegacyProtocol.PROTOCOL_113), dst, false);
         int selectSlot = in.remaining() > 0 ? in.readByte() : 0;
 
         LegacyStream out = LegacyStream.writer(48);
+        out.writeByte(legacyId & 0xFF);
         out.writeByte(windowId);
         if (dst.isBefore90()) {
             out.writeShortBE(slot);
@@ -1333,7 +1495,7 @@ public final class PacketTranslator {
         if (dst.getProtocol() >= 92) {
             out.writeByte(selectSlot);
         }
-        return out.toByteArray();
+        return OutboundResult.forward(out.toByteArray());
     }
 
     private static byte[] translateContainerSetDataOutbound(byte[] payload, LegacyProtocol dst) {
@@ -1348,32 +1510,52 @@ public final class PacketTranslator {
         return out.toByteArray();
     }
 
-    private static byte[] translateContainerSetContentOutbound(byte[] payload, LegacyProtocol dst) {
+    private static OutboundResult translateContainerSetContentOutboundResult(byte[] payload, LegacyProtocol dst) {
+        int legacyId = PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.CONTAINER_SET_CONTENT_PACKET & 0xFF);
+        if (legacyId == PacketIdMapper.UNMAPPED) {
+            return OutboundResult.drop(false);
+        }
         LegacyStream in = LegacyStream.reader(payload);
         int windowId = in.readUnsignedVarInt();
+        if ((dst.isBefore110() && windowId == 119) || windowId == 124 || windowId >= 122) {
+            return OutboundResult.drop(false);
+        }
         long eid = in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
         int count = in.readUnsignedVarInt();
         boolean isCreative = (windowId == SPECIAL_CREATIVE_WINDOW);
 
         List<LegacyStream.LegacySlot> mappedSlots = new ArrayList<>(count);
         for (int i = 0; i < count && in.remaining() > 0; i++) {
-            LegacyStream.LegacySlot rawSlot = in.readSlot(LegacyProtocol.PROTOCOL_113);
-            LegacyStream.LegacySlot mapped = LegacyContentMapper.mapSlotOutbound(rawSlot, dst, isCreative);
-            if (isCreative) {
-                if (mapped != null && mapped.id() > 0) {
-                    mappedSlots.add(mapped);
+            try {
+                LegacyStream.LegacySlot rawSlot = in.readSlot(LegacyProtocol.PROTOCOL_113);
+                LegacyStream.LegacySlot mapped = LegacyContentMapper.mapSlotOutbound(rawSlot, dst, isCreative);
+                if (isCreative) {
+                    if (mapped != null && mapped.id() > 0) {
+                        mappedSlots.add(mapped);
+                    }
+                } else {
+                    mappedSlots.add(mapped == null ? LegacyStream.LegacySlot.AIR : mapped);
                 }
-            } else {
-                mappedSlots.add(mapped == null ? LegacyStream.LegacySlot.AIR : mapped);
+            } catch (RuntimeException malformed) {
+                if (isCreative) {
+                    break;
+                }
+                throw malformed;
             }
         }
-        int hotbarCount = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
+        // Nukkit-MOT envia 45 slots (36 + 9 vacios) en PlayerInventory, pero 0.15.x solo soporta 36 slots en windowId=0
+        if (windowId == 0 && dst.isBefore90() && mappedSlots.size() > 36) {
+            mappedSlots = new ArrayList<>(mappedSlots.subList(0, 36));
+        }
+
+        int hotbarCount = in.remaining() > 0 ? Math.min(36, in.readUnsignedVarInt()) : 0;
         int[] hotbar = new int[hotbarCount];
         for (int i = 0; i < hotbarCount && in.remaining() > 0; i++) {
             hotbar[i] = in.readVarInt();
         }
 
         LegacyStream out = LegacyStream.writer(64 + mappedSlots.size() * 12);
+        out.writeByte(legacyId & 0xFF);
         if (!dst.isBefore110()) {
             out.writeUnsignedVarInt(windowId);
             out.writeEntityUniqueId(dst, eid);
@@ -1399,28 +1581,25 @@ public final class PacketTranslator {
                 out.writeVarInt(h);
             }
         }
-        return out.toByteArray();
+        return OutboundResult.forward(out.toByteArray());
     }
 
     private static byte[] translateCraftingDataOutbound(byte[] payload, LegacyProtocol dst) {
         LegacyStream in = LegacyStream.reader(payload);
         int count = in.readUnsignedVarInt();
-        LegacyStream out = LegacyStream.writer(Math.max(64, payload.length));
-        if (dst.isBefore90()) {
-            out.writeIntBE(count);
-        } else {
-            out.writeUnsignedVarInt(count);
+
+        record EncodedRecipe(int type, byte[] data) {
         }
+        List<EncodedRecipe> validRecipes = new ArrayList<>(Math.min(count, 2048));
 
         for (int i = 0; i < count && in.remaining() > 0; i++) {
             int recipeType = in.readVarInt();
             if (recipeType < 0) {
-                writeEmptyRecipe(out, dst);
                 continue;
             }
 
             LegacyStream entry = LegacyStream.writer(64);
-            boolean unsupportedSlot = false;
+            boolean unsupported = false;
             switch (recipeType) {
                 case 0 -> { // ENTRY_SHAPELESS
                     int ingCount = in.readUnsignedVarInt();
@@ -1432,12 +1611,12 @@ public final class PacketTranslator {
                     for (int j = 0; j < ingCount && in.remaining() > 0; j++) {
                         LegacyStream.LegacySlot raw = in.readSlot(LegacyProtocol.PROTOCOL_113);
                         LegacyStream.LegacySlot mapped = LegacyContentMapper.mapSlotOutbound(raw, dst, false);
-                        if (raw.id() > 0 && (mapped == null || mapped.id() <= 0)) {
-                            unsupportedSlot = true;
+                        if (raw.id() != 0 && (mapped == null || mapped.id() <= 0)) {
+                            unsupported = true;
                         }
                         entry.writeSlot(dst, mapped);
                     }
-                    int resCount = in.readUnsignedVarInt();
+                    int resCount = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
                     if (dst.isBefore90()) {
                         entry.writeIntBE(resCount);
                     } else {
@@ -1446,12 +1625,12 @@ public final class PacketTranslator {
                     for (int j = 0; j < resCount && in.remaining() > 0; j++) {
                         LegacyStream.LegacySlot raw = in.readSlot(LegacyProtocol.PROTOCOL_113);
                         LegacyStream.LegacySlot mapped = LegacyContentMapper.mapSlotOutbound(raw, dst, false);
-                        if (raw.id() > 0 && (mapped == null || mapped.id() <= 0)) {
-                            unsupportedSlot = true;
+                        if (raw.id() != 0 && (mapped == null || mapped.id() <= 0)) {
+                            unsupported = true;
                         }
                         entry.writeSlot(dst, mapped);
                     }
-                    entry.writeUUID(in.readUUID());
+                    entry.writeUUID(in.remaining() >= 16 ? in.readUUID() : new UUID(0L, 0L));
                 }
                 case 1 -> { // ENTRY_SHAPED
                     int width = in.readVarInt();
@@ -1467,12 +1646,12 @@ public final class PacketTranslator {
                     for (int j = 0; j < gridSize && in.remaining() > 0; j++) {
                         LegacyStream.LegacySlot raw = in.readSlot(LegacyProtocol.PROTOCOL_113);
                         LegacyStream.LegacySlot mapped = LegacyContentMapper.mapSlotOutbound(raw, dst, false);
-                        if (raw.id() > 0 && (mapped == null || mapped.id() <= 0)) {
-                            unsupportedSlot = true;
+                        if (raw.id() != 0 && (mapped == null || mapped.id() <= 0)) {
+                            unsupported = true;
                         }
                         entry.writeSlot(dst, mapped);
                     }
-                    int resCount = in.readUnsignedVarInt();
+                    int resCount = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
                     if (dst.isBefore90()) {
                         entry.writeIntBE(resCount);
                     } else {
@@ -1481,19 +1660,19 @@ public final class PacketTranslator {
                     for (int j = 0; j < resCount && in.remaining() > 0; j++) {
                         LegacyStream.LegacySlot raw = in.readSlot(LegacyProtocol.PROTOCOL_113);
                         LegacyStream.LegacySlot mapped = LegacyContentMapper.mapSlotOutbound(raw, dst, false);
-                        if (raw.id() > 0 && (mapped == null || mapped.id() <= 0)) {
-                            unsupportedSlot = true;
+                        if (raw.id() != 0 && (mapped == null || mapped.id() <= 0)) {
+                            unsupported = true;
                         }
                         entry.writeSlot(dst, mapped);
                     }
-                    entry.writeUUID(in.readUUID());
+                    entry.writeUUID(in.remaining() >= 16 ? in.readUUID() : new UUID(0L, 0L));
                 }
                 case 2 -> { // ENTRY_FURNACE
                     int inputId = in.readVarInt();
                     LegacyStream.LegacySlot rawRes = in.readSlot(LegacyProtocol.PROTOCOL_113);
                     LegacyStream.LegacySlot mappedRes = LegacyContentMapper.mapSlotOutbound(rawRes, dst, false);
-                    if ((rawRes.id() > 0 && (mappedRes == null || mappedRes.id() <= 0)) || inputId > 509) {
-                        unsupportedSlot = true;
+                    if (inputId <= 0 || inputId > 460 || (rawRes.id() != 0 && (mappedRes == null || mappedRes.id() <= 0))) {
+                        unsupported = true;
                     }
                     if (dst.isBefore90()) {
                         entry.writeIntBE(inputId);
@@ -1507,8 +1686,8 @@ public final class PacketTranslator {
                     int inputDamage = in.readVarInt();
                     LegacyStream.LegacySlot rawRes = in.readSlot(LegacyProtocol.PROTOCOL_113);
                     LegacyStream.LegacySlot mappedRes = LegacyContentMapper.mapSlotOutbound(rawRes, dst, false);
-                    if ((rawRes.id() > 0 && (mappedRes == null || mappedRes.id() <= 0)) || inputId > 509) {
-                        unsupportedSlot = true;
+                    if (inputId <= 0 || inputId > 460 || (rawRes.id() != 0 && (mappedRes == null || mappedRes.id() <= 0))) {
+                        unsupported = true;
                     }
                     if (dst.isBefore90()) {
                         entry.writeIntBE(((inputId & 0xFFFF) << 16) | (inputDamage & 0xFFFF));
@@ -1518,44 +1697,36 @@ public final class PacketTranslator {
                     }
                     entry.writeSlot(dst, mappedRes);
                 }
-                case 4 -> entry.writeUUID(in.readUUID());
+                case 4 -> entry.writeUUID(in.remaining() >= 16 ? in.readUUID() : new UUID(0L, 0L));
                 default -> {
-                    writeEmptyRecipe(out, dst);
-                    for (int rem = i + 1; rem < count; rem++) {
-                        writeEmptyRecipe(out, dst);
-                    }
                     in.position(in.position() + in.remaining());
-                    continue;
+                    unsupported = true;
                 }
             }
 
-            if (unsupportedSlot) {
-                writeEmptyRecipe(out, dst);
-                continue;
+            if (!unsupported) {
+                validRecipes.add(new EncodedRecipe(recipeType, entry.toByteArray()));
             }
-
-            byte[] entryBytes = entry.toByteArray();
-            if (dst.isBefore90()) {
-                out.writeIntBE(recipeType);
-                out.writeIntBE(entryBytes.length);
-            } else {
-                out.writeVarInt(recipeType);
-            }
-            out.writeBytes(entryBytes);
         }
 
         boolean cleanRecipes = in.remaining() > 0 && in.readBoolean();
+        LegacyStream out = LegacyStream.writer(Math.max(64, payload.length));
+        if (dst.isBefore90()) {
+            out.writeIntBE(validRecipes.size());
+        } else {
+            out.writeUnsignedVarInt(validRecipes.size());
+        }
+        for (EncodedRecipe er : validRecipes) {
+            if (dst.isBefore90()) {
+                out.writeIntBE(er.type());
+                out.writeIntBE(er.data().length);
+            } else {
+                out.writeVarInt(er.type());
+            }
+            out.writeBytes(er.data());
+        }
         out.writeBoolean(cleanRecipes);
         return out.toByteArray();
-    }
-
-    private static void writeEmptyRecipe(LegacyStream out, LegacyProtocol dst) {
-        if (dst.isBefore90()) {
-            out.writeIntBE(-1);
-            out.writeIntBE(0);
-        } else {
-            out.writeVarInt(-1);
-        }
     }
 
     private static byte[] translateAdventureSettingsOutbound(byte[] payload, LegacyProtocol dst) {
@@ -1625,7 +1796,7 @@ public final class PacketTranslator {
         return out.toByteArray();
     }
 
-    private static byte[] translatePlayerListOutbound(byte[] payload, LegacyProtocol dst) {
+    private static byte[] translatePlayerListOutbound(byte[] payload, LegacyProtocol dst, SessionProtocolRegistry registry) {
         if (!dst.isBefore110()) {
             return payload;
         }
@@ -1657,9 +1828,17 @@ public final class PacketTranslator {
                 if (in.remaining() > 0) {
                     in.readString(LegacyProtocol.PROTOCOL_113);
                 }
-                String mappedSkinId = skinId.toLowerCase(java.util.Locale.ROOT).contains("slim")
-                        ? "Standard_CustomSlim"
-                        : "Standard_Custom";
+
+                // Nukkit-MOT BinaryStream.putSkin convierte a Steve si rawSkin != 8192B en v113;
+                // restaurar la skin real cacheada del jugador (64x64 / HD / slim) antes de normalizar.
+                SkinSnapshot realSnap = resolveRealPlayerSkin(uuid, name, registry);
+                boolean slim = skinId.toLowerCase(Locale.ROOT).contains("slim");
+                if (realSnap != null && realSnap.skinData() != null && realSnap.skinData().length > 0) {
+                    rawSkin = realSnap.skinData();
+                    slim = realSnap.slim();
+                }
+
+                String mappedSkinId = slim ? "Standard_CustomSlim" : "Standard_Custom";
                 byte[] safeSkin = LegacyContentMapper.normalizeSkinData(rawSkin, dst);
 
                 out.writeEntityUniqueId(dst, eid);
@@ -1674,6 +1853,37 @@ public final class PacketTranslator {
             }
         }
         return out.toByteArray();
+    }
+
+    private static SkinSnapshot resolveRealPlayerSkin(UUID uuid, String name, SessionProtocolRegistry registry) {
+        if (registry != null) {
+            SkinSnapshot cached = registry.getSkin(uuid, name);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        try {
+            Server server = Server.getInstance();
+            if (server != null) {
+                Player target = null;
+                if (uuid != null) {
+                    target = server.getOnlinePlayers().get(uuid);
+                }
+                if (target == null && name != null && !name.isBlank()) {
+                    target = server.getPlayerExact(name);
+                }
+                if (target != null && target.getSkin() != null) {
+                    Skin skin = target.getSkin();
+                    if (skin.getSkinData() != null && skin.getSkinData().data != null && skin.getSkinData().data.length > 0) {
+                        boolean slim = skin.getSkinId() != null
+                                && skin.getSkinId().toLowerCase(Locale.ROOT).contains("slim");
+                        return new SkinSnapshot(skin.getSkinId(), skin.getSkinData().data, slim);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static byte[] translateSpawnExperienceOrbOutbound(byte[] payload, LegacyProtocol dst) {

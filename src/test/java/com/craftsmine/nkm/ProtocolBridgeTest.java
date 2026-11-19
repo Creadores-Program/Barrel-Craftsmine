@@ -9,13 +9,16 @@ import cn.nukkit.nbt.tag.LongTag;
 import cn.nukkit.nbt.tag.ShortTag;
 import cn.nukkit.network.protocol.AdventureSettingsPacket;
 import cn.nukkit.network.protocol.MovePlayerPacket;
+import cn.nukkit.network.protocol.PlayerActionPacket;
 import cn.nukkit.network.protocol.PlayerListPacket;
 import cn.nukkit.network.protocol.RequestChunkRadiusPacket;
 import cn.nukkit.network.protocol.TextPacket;
+import cn.nukkit.network.protocol.v113.CommandStepPacket_v113;
 import cn.nukkit.network.protocol.v113.ProtocolInfo_v113;
 import cn.nukkit.network.protocol.v113.RemoveBlockPacket_v113;
 import cn.nukkit.network.protocol.v113.UseItemPacket_v113;
 import cn.nukkit.utils.BinaryStream;
+import com.craftsmine.nkm.network.SessionProtocolRegistry;
 import com.craftsmine.nkm.protocol.BatchCodec;
 import com.craftsmine.nkm.protocol.ChunkTranslator;
 import com.craftsmine.nkm.protocol.LegacyContentMapper;
@@ -24,6 +27,7 @@ import com.craftsmine.nkm.protocol.LegacyProtocol;
 import com.craftsmine.nkm.protocol.LegacyStream;
 import com.craftsmine.nkm.protocol.PacketIdMapper;
 import com.craftsmine.nkm.protocol.PacketTranslator;
+import io.netty.channel.ChannelId;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -285,16 +289,21 @@ class ProtocolBridgeTest {
         assertEquals("Titulo", tr.readString(LegacyProtocol.PROTOCOL_84));
         assertEquals("Bienvenido", tr.readString(LegacyProtocol.PROTOCOL_84));
 
-        // 2) UpdateAttributesPacket: EntityUniqueId (VarLong zigzag)
-        LegacyStream attrV113 = LegacyStream.writer(64);
+        // 2) UpdateAttributesPacket: EntityUniqueId (VarLong zigzag) + mapeo minecraft:health -> generic.health + filtro
+        LegacyStream attrV113 = LegacyStream.writer(96);
         attrV113.writeByte(ProtocolInfo_v113.UPDATE_ATTRIBUTES_PACKET & 0xFF);
         attrV113.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 1L);
-        attrV113.writeUnsignedVarInt(1);
+        attrV113.writeUnsignedVarInt(2);
         attrV113.writeFloatLE(0f);
         attrV113.writeFloatLE(20f);
-        attrV113.writeFloatLE(20f);
+        attrV113.writeFloatLE(14f);
         attrV113.writeFloatLE(20f);
         attrV113.writeString(LegacyProtocol.PROTOCOL_113, "minecraft:health");
+        attrV113.writeFloatLE(0f);
+        attrV113.writeFloatLE(1024f);
+        attrV113.writeFloatLE(0f);
+        attrV113.writeFloatLE(0f);
+        attrV113.writeString(LegacyProtocol.PROTOCOL_113, "minecraft:luck");
         PacketTranslator.OutboundResult attrOut = PacketTranslator.translateOutbound(attrV113.toByteArray(), LegacyProtocol.PROTOCOL_84, true);
         LegacyStream ar = LegacyStream.reader(attrOut.legacyPacket());
         assertEquals(0x1a, ar.readByte());
@@ -302,8 +311,8 @@ class ProtocolBridgeTest {
         assertEquals(1, ar.readShortBE());
         assertEquals(0f, ar.readFloatBE());
         assertEquals(20f, ar.readFloatBE());
-        assertEquals(20f, ar.readFloatBE());
-        assertEquals("minecraft:health", ar.readString(LegacyProtocol.PROTOCOL_84));
+        assertEquals(14f, ar.readFloatBE());
+        assertEquals("generic.health", ar.readString(LegacyProtocol.PROTOCOL_84));
 
         // 3) PlayerListPacket (2 entradas con geometryName + geometryData + xboxUserId de Nukkit-MOT V1_1_0)
         UUID u1 = UUID.randomUUID();
@@ -496,12 +505,30 @@ class ProtocolBridgeTest {
         CompoundTag parsedOut = (CompoundTag) NBTIO.readTag(new ByteArrayInputStream(s2.nbt()), ByteOrder.LITTLE_ENDIAN, false);
         assertEquals(1, parsedOut.getList("ench", CompoundTag.class).size());
         assertEquals(0, parsedOut.getList("ench", CompoundTag.class).get(0).getShort("id"));
+
+        // Inventario normal (no creativo): items sin soporte vuelven a AIR sin traduccion a items parecidos
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(450, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(444, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(446, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(383, 54, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(399, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, false).id());
+
+        // Creativo: items/bloques no existentes en la version se eliminan (null), ni reemplazo ni AIR
+        assertNull(LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(450, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_105, true));
+        assertNull(LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(444, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, true));
+        assertNull(LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(84, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, true));
+        assertNull(LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(160, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, true));
     }
 
     @Test
-    void patchesAddEntityModifiersMetadataAndSuppressionFor01510() {
-        // 1) Shulker (54) debe suprimirse en < 92
-        LegacyStream shulker = LegacyStream.writer(64);
+    void patchesAddEntityModifiersMetadataAndEntityReplacementsFor01510() {
+        SessionProtocolRegistry registry = new SessionProtocolRegistry();
+        SessionProtocolRegistry.LegacySessionState state = registry.registerOrUpdate(
+                new DummyChannelId("entity-test"), null, 84, "JugadorTest"
+        );
+
+        // 1) Shulker (54) se reemplaza por Blaze (43) en < 92 y filtra DATA_VARIANT en metadata/eventos
+        LegacyStream shulker = LegacyStream.writer(96);
         shulker.writeByte(ProtocolInfo_v113.ADD_ENTITY_PACKET & 0xFF);
         shulker.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 100L);
         shulker.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, 100L);
@@ -511,8 +538,54 @@ class ProtocolBridgeTest {
         shulker.writeFloatLE(0f);
         shulker.writeFloatLE(0f);
         shulker.writeUnsignedVarInt(0);
-        shulker.writeUnsignedVarInt(0); // meta
-        assertTrue(PacketTranslator.translateOutbound(shulker.toByteArray(), LegacyProtocol.PROTOCOL_84, true).suppress());
+        shulker.writeUnsignedVarInt(1); // 1 meta entry: key 2 variant (debe filtrarse por reemplazo)
+        shulker.writeUnsignedVarInt(2);
+        shulker.writeUnsignedVarInt(LegacyContentMapper.DATA_TYPE_INT);
+        shulker.writeVarInt(16);
+        PacketTranslator.OutboundResult shulkerOut = PacketTranslator.translateOutbound(
+                shulker.toByteArray(), LegacyProtocol.PROTOCOL_84, true, registry, state
+        );
+        assertFalse(shulkerOut.suppress());
+        LegacyStream sr = LegacyStream.reader(shulkerOut.legacyPacket());
+        assertEquals(0x0b, sr.readByte());
+        assertEquals(100L, sr.readEntityRuntimeId(LegacyProtocol.PROTOCOL_84));
+        assertEquals(43, sr.readIntBE()); // Blaze fallback
+
+        // Otros reemplazos clave para 0.15.x: Llama->Donkey(24), Evoker->Witch(45), Vex->Bat(19), Guardian->Squid(17), Wither->WitherSkeleton(48)
+        assertEquals(24, LegacyContentMapper.mapEntityTypeOutbound(29, LegacyProtocol.PROTOCOL_84));
+        assertEquals(45, LegacyContentMapper.mapEntityTypeOutbound(104, LegacyProtocol.PROTOCOL_84));
+        assertEquals(19, LegacyContentMapper.mapEntityTypeOutbound(105, LegacyProtocol.PROTOCOL_84));
+        assertEquals(17, LegacyContentMapper.mapEntityTypeOutbound(49, LegacyProtocol.PROTOCOL_84));
+        assertEquals(48, LegacyContentMapper.mapEntityTypeOutbound(52, LegacyProtocol.PROTOCOL_84));
+        assertEquals(14, LegacyContentMapper.mapEntityTypeOutbound(28, LegacyProtocol.PROTOCOL_84));
+        assertEquals(41, LegacyContentMapper.mapEntityTypeOutbound(53, LegacyProtocol.PROTOCOL_84));
+
+        // Entidades > 1.1 ya no se traducen en el plugin (Nukkit-MOT las gestiona automaticamente)
+        assertEquals(-1, LegacyContentMapper.mapEntityTypeOutbound(110, LegacyProtocol.PROTOCOL_84));
+        assertEquals(-1, LegacyContentMapper.mapEntityTypeOutbound(122, LegacyProtocol.PROTOCOL_84));
+        assertEquals(-1, LegacyContentMapper.mapEntityTypeOutbound(123, LegacyProtocol.PROTOCOL_84));
+        assertEquals(-1, LegacyContentMapper.mapEntityTypeOutbound(75, LegacyProtocol.PROTOCOL_84));
+
+        // Evento especifico de entidad reemplazada (ej: 34) se filtra, mientras HURT (2) permanece
+        LegacyStream hurtEv = LegacyStream.writer(16);
+        hurtEv.writeByte(ProtocolInfo_v113.ENTITY_EVENT_PACKET & 0xFF);
+        hurtEv.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, 100L);
+        hurtEv.writeByte(2);
+        assertFalse(PacketTranslator.translateOutbound(hurtEv.toByteArray(), LegacyProtocol.PROTOCOL_84, true, registry, state).suppress());
+
+        // Nube AreaEffectCloud (95) sigue suprimiendose
+        LegacyStream aec = LegacyStream.writer(64);
+        aec.writeByte(ProtocolInfo_v113.ADD_ENTITY_PACKET & 0xFF);
+        aec.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 101L);
+        aec.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, 101L);
+        aec.writeUnsignedVarInt(95);
+        aec.writeVector3(LegacyProtocol.PROTOCOL_113, 0f, 64f, 0f);
+        aec.writeVector3(LegacyProtocol.PROTOCOL_113, 0f, 0f, 0f);
+        aec.writeFloatLE(0f);
+        aec.writeFloatLE(0f);
+        aec.writeUnsignedVarInt(0);
+        aec.writeUnsignedVarInt(0);
+        assertTrue(PacketTranslator.translateOutbound(aec.toByteArray(), LegacyProtocol.PROTOCOL_84, true, registry, state).suppress());
 
         // 2) Zombie (32) en 0.15.10 incluye modifiers(intBE 0) y metadata 0.15 + terminador 0x7F
         LegacyStream zombie = LegacyStream.writer(96);
@@ -711,6 +784,292 @@ class ProtocolBridgeTest {
         decodedUse.setBuffer(useAirCanon.canonicalPacket(), 1);
         decodedUse.decode();
         assertEquals(-1, decodedUse.face);
+    }
+
+    @Test
+    void translates015SlashCommandsAndRespawnToCanonicalV113Packets() {
+        GameVersion v110 = GameVersion.byProtocol(113, false);
+
+        // 1) Chat "/gamemode 1" -> CommandStepPacket_v113 (0x4f)
+        LegacyStream chatCmd = LegacyStream.writer(48);
+        chatCmd.writeByte(0x07); // 0.15 TextPacket
+        chatCmd.writeByte(TextPacket.TYPE_CHAT);
+        chatCmd.writeString(LegacyProtocol.PROTOCOL_84, "Trollhunters501C");
+        chatCmd.writeString(LegacyProtocol.PROTOCOL_84, "/gamemode 1");
+
+        PacketTranslator.InboundResult cmdRes = PacketTranslator.translateInbound(chatCmd.toByteArray(), LegacyProtocol.PROTOCOL_84);
+        assertFalse(cmdRes.suppress());
+        assertEquals(ProtocolInfo_v113.COMMAND_STEP_PACKET & 0xFF, cmdRes.canonicalPacket()[0] & 0xFF);
+        CommandStepPacket_v113 nukkitCmd = new CommandStepPacket_v113();
+        nukkitCmd.protocol = 113;
+        nukkitCmd.gameVersion = v110;
+        nukkitCmd.setBuffer(cmdRes.canonicalPacket(), 1);
+        nukkitCmd.decode();
+        assertEquals("gamemode 1", nukkitCmd.command);
+        assertTrue(nukkitCmd.args == null || nukkitCmd.args.isEmpty());
+
+        // 2) Chat "./help" -> CommandStepPacket_v113 ("help")
+        LegacyStream dotCmd = LegacyStream.writer(32);
+        dotCmd.writeByte(0x07);
+        dotCmd.writeByte(TextPacket.TYPE_CHAT);
+        dotCmd.writeString(LegacyProtocol.PROTOCOL_84, "Jugador");
+        dotCmd.writeString(LegacyProtocol.PROTOCOL_84, "./help");
+        PacketTranslator.InboundResult dotRes = PacketTranslator.translateInbound(dotCmd.toByteArray(), LegacyProtocol.PROTOCOL_84);
+        assertEquals(ProtocolInfo_v113.COMMAND_STEP_PACKET & 0xFF, dotRes.canonicalPacket()[0] & 0xFF);
+
+        // 3) Chat normal sigue siendo TextPacket (0x09)
+        LegacyStream chatNormal = LegacyStream.writer(32);
+        chatNormal.writeByte(0x07);
+        chatNormal.writeByte(TextPacket.TYPE_CHAT);
+        chatNormal.writeString(LegacyProtocol.PROTOCOL_84, "Jugador");
+        chatNormal.writeString(LegacyProtocol.PROTOCOL_84, "Hola mundo");
+        PacketTranslator.InboundResult normalRes = PacketTranslator.translateInbound(chatNormal.toByteArray(), LegacyProtocol.PROTOCOL_84);
+        assertEquals(ProtocolInfo_v113.TEXT_PACKET & 0xFF, normalRes.canonicalPacket()[0] & 0xFF);
+
+        // 4) RespawnPacket (0.15 pid 0x28) -> PlayerActionPacket ACTION_RESPAWN (7) con el EID de la sesion
+        SessionProtocolRegistry registry = new SessionProtocolRegistry();
+        SessionProtocolRegistry.LegacySessionState state = registry.registerOrUpdate(
+                new DummyChannelId("respawn-test"), null, 84, "Jugador"
+        );
+        state.setPlayerEntityId(55L);
+        LegacyStream respawn015 = LegacyStream.writer(16);
+        respawn015.writeByte(0x28);
+        respawn015.writeVector3(LegacyProtocol.PROTOCOL_84, 0f, 64f, 0f);
+        PacketTranslator.InboundResult respawnRes = PacketTranslator.translateInbound(
+                respawn015.toByteArray(), LegacyProtocol.PROTOCOL_84, state
+        );
+        assertFalse(respawnRes.suppress());
+        assertEquals(ProtocolInfo_v113.PLAYER_ACTION_PACKET & 0xFF, respawnRes.canonicalPacket()[0] & 0xFF);
+        PlayerActionPacket nukkitAction = new PlayerActionPacket();
+        nukkitAction.protocol = 113;
+        nukkitAction.gameVersion = v110;
+        nukkitAction.setBuffer(respawnRes.canonicalPacket(), 1);
+        nukkitAction.decode();
+        assertEquals(55L, nukkitAction.entityId);
+        assertEquals(7, nukkitAction.action);
+    }
+
+    @Test
+    void handlesNegativeBlockItemIdsTrimsInventoryAndDropsOffhandUiFor015() throws IOException {
+        // 1) Slot con ID negativo (-206) seguido de Enchanted Book (403) en SPECIAL_CREATIVE (sin desincronizar NBT)
+        CompoundTag bookTag = new CompoundTag().putList(new ListTag<CompoundTag>("ench")
+                .add(new CompoundTag().putShort("id", 0).putShort("lvl", 1)));
+        byte[] bookNbt = NBTIO.write(bookTag, ByteOrder.LITTLE_ENDIAN, true);
+
+        LegacyStream creative = LegacyStream.writer(256);
+        creative.writeByte(ProtocolInfo_v113.CONTAINER_SET_CONTENT_PACKET & 0xFF);
+        creative.writeUnsignedVarInt(0x79);
+        creative.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 1L);
+        creative.writeUnsignedVarInt(2);
+        // Slot 1: negative block ID (-206) serialized in full v113 format
+        creative.writeVarInt(-206);
+        creative.writeVarInt(1); // meta=0, count=1
+        creative.writeShortLE(0); // nbtLen=0
+        creative.writeVarInt(0); // canPlaceOn
+        creative.writeVarInt(0); // canDestroy
+        // Slot 2: Enchanted Book (403)
+        creative.writeVarInt(403);
+        creative.writeVarInt(1);
+        creative.writeShortLE(0xFFFF);
+        creative.writeByte(1);
+        creative.writeBytes(bookNbt);
+        creative.writeVarInt(0);
+        creative.writeVarInt(0);
+        creative.writeUnsignedVarInt(0);
+
+        PacketTranslator.OutboundResult creativeOut = PacketTranslator.translateOutbound(
+                creative.toByteArray(), LegacyProtocol.PROTOCOL_84, true
+        );
+        assertFalse(creativeOut.suppress());
+        LegacyStream cr = LegacyStream.reader(creativeOut.legacyPacket());
+        assertEquals(0x2e, cr.readByte());
+        assertEquals(0x79, cr.readByte());
+        assertEquals(1, cr.readShortBE());
+        assertEquals(403, cr.readSlot(LegacyProtocol.PROTOCOL_84).id());
+
+        // 2) PlayerInventory (windowId=0) con 45 slots se recorta a 36 para 0.15.x
+        LegacyStream inv = LegacyStream.writer(256);
+        inv.writeByte(ProtocolInfo_v113.CONTAINER_SET_CONTENT_PACKET & 0xFF);
+        inv.writeUnsignedVarInt(0);
+        inv.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 1L);
+        inv.writeUnsignedVarInt(45);
+        for (int i = 0; i < 45; i++) {
+            inv.writeSlot(LegacyProtocol.PROTOCOL_113, LegacyStream.LegacySlot.AIR);
+        }
+        inv.writeUnsignedVarInt(9);
+        for (int i = 0; i < 9; i++) {
+            inv.writeVarInt(i + 9);
+        }
+        PacketTranslator.OutboundResult invOut = PacketTranslator.translateOutbound(inv.toByteArray(), LegacyProtocol.PROTOCOL_84, true);
+        LegacyStream invReader = LegacyStream.reader(invOut.legacyPacket());
+        assertEquals(0x2e, invReader.readByte());
+        assertEquals(0, invReader.readByte());
+        assertEquals(36, invReader.readShortBE());
+
+        // 3) Offhand (119) y UI (124) se suprimen en 0.15.x tanto en SetContent como SetSlot
+        LegacyStream offhand = LegacyStream.writer(32);
+        offhand.writeByte(ProtocolInfo_v113.CONTAINER_SET_CONTENT_PACKET & 0xFF);
+        offhand.writeUnsignedVarInt(119);
+        offhand.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 1L);
+        offhand.writeUnsignedVarInt(1);
+        offhand.writeSlot(LegacyProtocol.PROTOCOL_113, LegacyStream.LegacySlot.AIR);
+        offhand.writeUnsignedVarInt(0);
+        assertTrue(PacketTranslator.translateOutbound(offhand.toByteArray(), LegacyProtocol.PROTOCOL_84, true).suppress());
+
+        LegacyStream uiSlot = LegacyStream.writer(16);
+        uiSlot.writeByte(ProtocolInfo_v113.CONTAINER_SET_SLOT_PACKET & 0xFF);
+        uiSlot.writeByte(124);
+        uiSlot.writeVarInt(0);
+        uiSlot.writeVarInt(0);
+        uiSlot.writeSlot(LegacyProtocol.PROTOCOL_113, LegacyStream.LegacySlot.AIR);
+        assertTrue(PacketTranslator.translateOutbound(uiSlot.toByteArray(), LegacyProtocol.PROTOCOL_84, true).suppress());
+
+        // ContainerClosePacket corrupto (> 1 byte) suprimido
+        assertTrue(PacketTranslator.translateOutbound(new byte[]{0x31, 0x00, 0x01, 0x02}, LegacyProtocol.PROTOCOL_84, true).suppress());
+    }
+
+    @Test
+    void omitsUnsupportedRecipesFiltersEffectsAndRemapsParticles() {
+        // 1) CraftingDataPacket con 1 receta vacia (-1) y 1 horno valido -> count real = 1 (sin entradas -1)
+        LegacyStream craft = LegacyStream.writer(64);
+        craft.writeByte(ProtocolInfo_v113.CRAFTING_DATA_PACKET & 0xFF);
+        craft.writeUnsignedVarInt(2);
+        craft.writeVarInt(-1);
+        craft.writeVarInt(2);
+        craft.writeVarInt(15);
+        craft.writeSlot(LegacyProtocol.PROTOCOL_113, new LegacyStream.LegacySlot(265, 0, 1, new byte[0], new String[0], new String[0]));
+        craft.writeBoolean(true);
+        LegacyStream cr = LegacyStream.reader(PacketTranslator.translateOutbound(craft.toByteArray(), LegacyProtocol.PROTOCOL_84, true).legacyPacket());
+        assertEquals(0x2f, cr.readByte());
+        assertEquals(1, cr.readIntBE());
+        assertEquals(2, cr.readIntBE());
+
+        // 2) MobEffect ID 25 (Levitation) filtrado en 0.15.x; ID 1 (Speed) reenviado
+        LegacyStream lev = LegacyStream.writer(24);
+        lev.writeByte(ProtocolInfo_v113.MOB_EFFECT_PACKET & 0xFF);
+        lev.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, 1L);
+        lev.writeByte(1);
+        lev.writeVarInt(25);
+        lev.writeVarInt(0);
+        lev.writeBoolean(true);
+        lev.writeVarInt(200);
+        assertTrue(PacketTranslator.translateOutbound(lev.toByteArray(), LegacyProtocol.PROTOCOL_84, true).suppress());
+
+        // 3) Particula V1_1_0 MOB_SPELL (30) -> 0.15 MOB_SPELL (26) y END_ROD (44) -> suprimido en 0.15 / 39 en 1.0.5
+        LegacyStream spell = LegacyStream.writer(24);
+        spell.writeByte(ProtocolInfo_v113.LEVEL_EVENT_PACKET & 0xFF);
+        spell.writeVarInt(0x4000 | 30);
+        spell.writeVector3(LegacyProtocol.PROTOCOL_113, 0f, 64f, 0f);
+        spell.writeVarInt(0xFF0000);
+        LegacyStream spReader = LegacyStream.reader(PacketTranslator.translateOutbound(spell.toByteArray(), LegacyProtocol.PROTOCOL_84, true).legacyPacket());
+        assertEquals(0x16, spReader.readByte());
+        assertEquals(0x4000 | 26, spReader.readShortBE());
+
+        LegacyStream rod = LegacyStream.writer(24);
+        rod.writeByte(ProtocolInfo_v113.LEVEL_EVENT_PACKET & 0xFF);
+        rod.writeVarInt(0x4000 | 44);
+        rod.writeVector3(LegacyProtocol.PROTOCOL_113, 0f, 64f, 0f);
+        rod.writeVarInt(0);
+        assertTrue(PacketTranslator.translateOutbound(rod.toByteArray(), LegacyProtocol.PROTOCOL_84, true).suppress());
+        LegacyStream rod105 = LegacyStream.reader(PacketTranslator.translateOutbound(rod.toByteArray(), LegacyProtocol.PROTOCOL_105, false).legacyPacket());
+        assertEquals(0x1b, rod105.readByte());
+        assertEquals(0x4000 | 39, rod105.readVarInt());
+    }
+
+    @Test
+    void sanitizesWarpedForestNetherChunksAndInjectsRealPlayerSkins() {
+        // 1) Chunk del Nether (Warped Forest biome 180 + bloque 250 wrapped de 506 y 223 de 479)
+        LegacyStream chunkPayload = LegacyStream.writer(16384);
+        chunkPayload.writeByte(1);
+        chunkPayload.writeByte(0);
+        byte[] ids = new byte[4096];
+        ids[0] = (byte) 250; // wrapped 506 WARPED_FUNGUS -> 1 (Stone)
+        ids[1] = (byte) 223; // wrapped 479 WARPED_NYLIUM -> 159 (Stained Clay)
+        chunkPayload.writeBytes(ids);
+        chunkPayload.writeBytes(new byte[2048]);
+        chunkPayload.writeBytes(new byte[2048]);
+        chunkPayload.writeBytes(new byte[2048]);
+        chunkPayload.writeBytes(new byte[512]);
+        byte[] biomes = new byte[256];
+        Arrays.fill(biomes, (byte) 180); // Warped Forest
+        chunkPayload.writeBytes(biomes);
+        chunkPayload.writeByte(0);
+        chunkPayload.writeVarInt(0);
+
+        LegacyStream full = LegacyStream.writer(16384);
+        full.writeVarInt(0);
+        full.writeVarInt(0);
+        full.writeByteArray(LegacyProtocol.PROTOCOL_113, chunkPayload.toByteArray());
+
+        byte[] p84 = ChunkTranslator.translateOutbound(full.toByteArray(), LegacyProtocol.PROTOCOL_84);
+        LegacyStream r84 = LegacyStream.reader(p84);
+        r84.readIntBE();
+        r84.readIntBE();
+        r84.readByte();
+        byte[] col84 = r84.readByteArray(LegacyProtocol.PROTOCOL_84);
+        assertEquals(1, col84[0] & 0xFF);
+        assertEquals(159, col84[1] & 0xFF);
+
+        // En p105 (subchunk) el bioma 180 debe haberse mapeado a 8 (Hell)
+        byte[] p105 = ChunkTranslator.translateOutbound(full.toByteArray(), LegacyProtocol.PROTOCOL_105);
+        LegacyStream r105 = LegacyStream.reader(p105);
+        r105.readVarInt();
+        r105.readVarInt();
+        byte[] raw105 = r105.readByteArray(LegacyProtocol.PROTOCOL_105);
+        int biomeOffset105 = 1 + 1 + 4096 + 2048 + 2048 + 2048 + 512;
+        assertEquals(8, raw105[biomeOffset105] & 0xFF);
+
+        // 2) Skin real cacheada (64x64 Slim = 16384B) restaura el skin de Steve de 8192B en PlayerListPacket
+        SessionProtocolRegistry registry = new SessionProtocolRegistry();
+        UUID targetUuid = UUID.randomUUID();
+        byte[] customPixels = new byte[Skin.DOUBLE_SKIN_SIZE];
+        Arrays.fill(customPixels, (byte) 0x42);
+        registry.cacheSkin(targetUuid, "OtroJugador", "Standard_CustomSlim", customPixels, true);
+
+        LegacyStream pl = LegacyStream.writer(10000);
+        pl.writeByte(ProtocolInfo_v113.PLAYER_LIST_PACKET & 0xFF);
+        pl.writeByte(PlayerListPacket.TYPE_ADD);
+        pl.writeUnsignedVarInt(1);
+        pl.writeUUID(targetUuid);
+        pl.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 77L);
+        pl.writeString(LegacyProtocol.PROTOCOL_113, "OtroJugador");
+        pl.writeString(LegacyProtocol.PROTOCOL_113, "Standard_Custom");
+        pl.writeByteArray(LegacyProtocol.PROTOCOL_113, new byte[Skin.SINGLE_SKIN_SIZE]); // Steve degradado por v113
+        pl.writeString(LegacyProtocol.PROTOCOL_113, "");
+        pl.writeString(LegacyProtocol.PROTOCOL_113, "");
+        pl.writeString(LegacyProtocol.PROTOCOL_113, "");
+
+        PacketTranslator.OutboundResult plOut = PacketTranslator.translateOutbound(
+                pl.toByteArray(), LegacyProtocol.PROTOCOL_84, true, registry, null
+        );
+        LegacyStream plr = LegacyStream.reader(plOut.legacyPacket());
+        assertEquals(0x38, plr.readByte());
+        assertEquals(PlayerListPacket.TYPE_ADD, plr.readByte());
+        assertEquals(1, plr.readIntBE());
+        assertEquals(targetUuid, plr.readUUID());
+        assertEquals(77L, plr.readEntityUniqueId(LegacyProtocol.PROTOCOL_84));
+        assertEquals("OtroJugador", plr.readString(LegacyProtocol.PROTOCOL_84));
+        assertEquals("Standard_CustomSlim", plr.readString(LegacyProtocol.PROTOCOL_84));
+        byte[] outSkin = plr.readBytes(plr.readShortBE());
+        assertEquals(Skin.DOUBLE_SKIN_SIZE, outSkin.length);
+        assertEquals((byte) 0x42, outSkin[0]);
+    }
+
+    private record DummyChannelId(String id) implements ChannelId {
+        @Override
+        public String asShortText() {
+            return id;
+        }
+
+        @Override
+        public String asLongText() {
+            return id;
+        }
+
+        @Override
+        public int compareTo(ChannelId o) {
+            return asLongText().compareTo(o.asLongText());
+        }
     }
 }
 

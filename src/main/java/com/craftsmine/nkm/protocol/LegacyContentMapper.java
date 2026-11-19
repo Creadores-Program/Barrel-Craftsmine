@@ -1,6 +1,7 @@
 package com.craftsmine.nkm.protocol;
 
 import cn.nukkit.network.protocol.v113.ProtocolInfo_v113;
+import com.craftsmine.nkm.network.SessionProtocolRegistry.EntitySpawnInfo;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -47,48 +48,65 @@ public final class LegacyContentMapper {
             return (id << 8) | m;
         }
 
-        // Bloques 1.2+ / Education / posteriores que nunca deben llegar crudos a < 113
-        switch (id) {
-            case 166 -> { // BARRIER / GLOW_STICK
-                id = 20;
-                m = 0;
-            }
-            case 176, 177 -> { // BANNER -> Sign / Wall Sign
-                id = (id == 176) ? 63 : 68;
-                m = m & 0x07;
-            }
-            case 190, 191, 253, 254 -> { // HARD_GLASS / STAINED
-                id = 20;
-                m = 0;
-            }
-            case 192, 238 -> { // CHEMICAL_HEAT / CHEMISTRY_TABLE
-                id = 58;
-                m = 0;
-            }
-            case 202, 204, 239 -> { // COLORED / UNDERWATER TORCH
-                id = 50;
-                m = Math.min(5, m);
-            }
-            case 241 -> { // STAINED_GLASS (1.2+) -> Glass
-                id = 20;
-                m = 0;
-            }
-            case 242 -> { // CAMERA_BLOCK -> Cobblestone
-                id = 4;
-                m = 0;
-            }
-            default -> {
-            }
-        }
-        if (blockId > 255) {
-            id = 1; // Stone fallback
+        // Bloques 1.2+ / Education / wrapped (>255) que nunca deben llegar crudos a < 113
+        if (blockId < 0 || blockId > 255) {
+            id = 1; // Stone fallback si llega un bloque moderno o negativo sin convertir
             m = 0;
+        } else {
+            switch (id) {
+                case 84 -> { // JUKEBOX (1.2+) -> NOTEBLOCK
+                    id = 25;
+                    m = 0;
+                }
+                case 160 -> { // STAINED_GLASS_PANE (1.2+) -> GLASS_PANE
+                    id = 102;
+                    m = 0;
+                }
+                case 166 -> { // BARRIER / GLOW_STICK
+                    id = 20;
+                    m = 0;
+                }
+                case 176, 177 -> { // BANNER -> Sign / Wall Sign
+                    id = (id == 176) ? 63 : 68;
+                    m = m & 0x07;
+                }
+                case 190, 191, 253, 254 -> { // HARD_GLASS / STAINED / wrapped modern blocks
+                    id = 20;
+                    m = 0;
+                }
+                case 192, 238 -> { // CHEMICAL_HEAT / CHEMISTRY_TABLE
+                    id = 58;
+                    m = 0;
+                }
+                case 202, 204, 239 -> { // COLORED / UNDERWATER TORCH
+                    id = 50;
+                    m = Math.min(5, m);
+                }
+                case 241 -> { // STAINED_GLASS (1.2+) -> Glass
+                    id = 20;
+                    m = 0;
+                }
+                case 242 -> { // CAMERA_BLOCK -> Cobblestone
+                    id = 4;
+                    m = 0;
+                }
+                case 248, 249, 250 -> { // INFO_UPDATE / MOVING_BLOCK (incl. wrapped Warped Fungus 506->250) -> Stone
+                    id = 1;
+                    m = 0;
+                }
+                case 255 -> { // RESERVED6 / wrapped 511 -> Air
+                    id = 0;
+                    m = 0;
+                }
+                default -> {
+                }
+            }
         }
 
         // 1.1.0 bloques (205, 218 Shulker, 219..237 GlazedTerracotta/Concrete) no existen en < 110
         if (dst.isBefore110()) {
             switch (id) {
-                case 205, 218 -> { // Shulker box -> Chest / Stained clay
+                case 205, 218 -> { // Shulker box -> Chest
                     id = 54;
                     m = 2;
                 }
@@ -167,13 +185,19 @@ public final class LegacyContentMapper {
                     m = (m == 2) ? 1 : 0;
                 }
                 case 169 -> { id = 89; m = 0; }    // SEA_LANTERN -> GLOWSTONE
-                case 255 -> { id = 0; m = 0; }     // RESERVED6 -> AIR
+                case 246 -> { id = 49; m = 0; }    // GLOWING_OBSIDIAN -> OBSIDIAN
+                case 247 -> { id = 42; m = 0; }    // NETHER_REACTOR -> IRON_BLOCK
+                case 251 -> m = Math.min(5, m);    // OBSERVER facing clamp
                 default -> {
                 }
             }
             // Sanitizar metadata de bloques antiguos para evitar crash de renderer en 0.15.x
-            if (id == 19 && m > 0) { // WET SPONGE -> DRY SPONGE (0.16+)
+            if (id == 3 && m > 2) {
                 m = 0;
+            } else if (id == 19 && m > 0) { // WET SPONGE -> DRY SPONGE (0.16+)
+                m = 0;
+            } else if (id == 162 && (m & 0x03) > 1) { // LOG2 only acacia (0) & dark oak (1)
+                m = m & 0xFC;
             } else if (id == 175 && (m & 0x07) > 5) { // DOUBLE_PLANT max variant 5
                 m = (m & 0x08);
             } else if (id == 1 && m > 6) {
@@ -189,6 +213,12 @@ public final class LegacyContentMapper {
             } else if (id == 98 && m > 3) {
                 m = 0;
             } else if (id == 155 && m > 2) {
+                m = 0;
+            } else if (id == 243) {
+                m = 0;
+            } else if (id == 244) {
+                m = m & 0x07;
+            } else if (id == 245) {
                 m = 0;
             }
         }
@@ -211,7 +241,7 @@ public final class LegacyContentMapper {
             boolean creativeMode
     ) {
         if (slot == null || slot.id() <= 0) {
-            return LegacyStream.LegacySlot.AIR;
+            return creativeMode ? null : LegacyStream.LegacySlot.AIR;
         }
 
         int id = slot.id();
@@ -236,31 +266,14 @@ public final class LegacyContentMapper {
             return new LegacyStream.LegacySlot(mappedId, mappedMeta, count, safeNbt, canPlace, canDestroy);
         }
 
-        // Items 1.1+ / modernos -> compatibilidad hacia atras
-        if (id == 466) { // ENCHANTED_GOLDEN_APPLE -> 322:1 en <= 1.1.x
-            id = 322;
-            meta = 1;
-        }
-
-        if (id > 509 || (id >= 464 && id <= 499)) {
-            return creativeMode ? null : LegacyStream.LegacySlot.AIR;
-        }
-
-        // Discos de musica 500..511 (1.2+)
-        if (id >= 500) {
+        // Items > 1.1 (ej. discos 500+, items modernos > 463) -> no existen en <= 1.1
+        if (id > 509 || (id >= 464 && id <= 499) || id >= 500) {
             return creativeMode ? null : LegacyStream.LegacySlot.AIR;
         }
 
         // Fireworks (401), Firework Star (402), Armor Stand (425), Banner (446), Banner Pattern (434), Respawn/Chem (442..456)
-        if (id == 401 || id == 402 || id == 425 || id == 434 || id == 442 || (id >= 447 && id <= 449) || id == 451 || id >= 453 && id <= 456) {
+        if (id == 401 || id == 402 || id == 425 || id == 434 || id == 442 || (id >= 446 && id <= 449) || id == 451 || (id >= 453 && id <= 456)) {
             return creativeMode ? null : LegacyStream.LegacySlot.AIR;
-        }
-        if (id == 446) { // Banner -> Sign en inventario si no creativo
-            if (creativeMode) {
-                return null;
-            }
-            id = 323;
-            meta = 0;
         }
 
         if (dst.isBefore110()) {
@@ -273,14 +286,7 @@ public final class LegacyContentMapper {
             }
             // Items exclusivos de 1.1.0: Totem (450), Shulker Shell (445), Iron Nugget (452)
             if (id == 450 || id == 445 || id == 452) {
-                if (creativeMode) {
-                    return null;
-                }
-                id = (id == 450) ? 322 : 0;
-                meta = (id == 322) ? 1 : 0;
-                if (id == 0) {
-                    return LegacyStream.LegacySlot.AIR;
-                }
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
         }
 
@@ -288,36 +294,23 @@ public final class LegacyContentMapper {
             // Items exclusivos de 1.0.x+: Ender Pearl (368), Eye of Ender (381), End Crystal (426),
             // Chorus (432,433), Dragon Breath (437), Lingering Potion (441), Command Minecart (443), Elytra (444)
             if (id == 368 || id == 381 || id == 426 || id == 432 || id == 433 || id == 437 || id == 441 || id == 443 || id == 444) {
-                if (creativeMode) {
-                    return null;
-                }
-                if (id == 444) {
-                    id = 307; // Iron chestplate fallback
-                    meta = 0;
-                } else {
-                    return LegacyStream.LegacySlot.AIR;
-                }
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
         }
 
         if (dst.isBefore90()) {
             // Items de 0.16+: Nether Star (399), Prismarine Shard (409), Prismarine Crystals (422)
             if (id == 399 || id == 409 || id == 422) {
-                if (creativeMode) {
-                    return null;
-                }
-                id = 264; // Diamond / Gold ingot fallback no invasivo o AIR
-                return LegacyStream.LegacySlot.AIR;
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
         }
 
-        // Spawn Eggs (383): filtrar mobs no soportados por la version destino (evita crash en inventario 0.15.10)
+        // Spawn Eggs (383): eliminar en creativo y convertir a AIR en inventario si el mob no existe nativamente en dst
         if (id == 383) {
             int mappedMob = mapEntityTypeOutbound(meta, dst);
-            if (mappedMob < 0) {
+            if (mappedMob < 0 || mappedMob != meta) {
                 return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
-            meta = mappedMob;
         }
 
         // Potions / Splash Potions (373, 438): limitar variantes de pocion en < 110
@@ -350,7 +343,7 @@ public final class LegacyContentMapper {
         if (blockId == 0 || blockId == 255 || blockId == 250 || blockId == 119 || blockId == 209 || blockId == 246 || blockId == 248 || blockId == 249) {
             return false;
         }
-        if (blockId == 166 || blockId == 176 || blockId == 177 || blockId == 190 || blockId == 191 || blockId == 192
+        if (blockId == 84 || blockId == 160 || blockId == 166 || blockId == 176 || blockId == 177 || blockId == 190 || blockId == 191 || blockId == 192
                 || blockId == 202 || blockId == 204 || blockId == 238 || blockId == 239 || blockId == 241
                 || blockId == 242 || blockId == 253 || blockId == 254 || blockId > 255) {
             return false;
@@ -368,7 +361,7 @@ public final class LegacyContentMapper {
             }
         }
         if (dst.isBefore90()) {
-            if (blockId == 138 || blockId == 168 || blockId == 169 || (blockId == 19 && meta > 0)) {
+            if (blockId == 138 || blockId == 168 || blockId == 169 || blockId == 247 || (blockId == 19 && meta > 0)) {
                 return false;
             }
         }
@@ -390,39 +383,26 @@ public final class LegacyContentMapper {
     // =========================================================================
 
     /**
-     * Mapea o filtra un Entity Network ID hacia {@code dst}.
-     * Retorna {@code -1} cuando la entidad no existe y no tiene fallback seguro (el AddEntity debe omitirse).
+     * Mapea o reemplaza un Entity Network ID de <= 1.1 hacia {@code dst} buscando la entidad
+     * equivalente mas parecida soportada por la version destino (las entidades > 1.1 ya las
+     * maneja automaticamente Nukkit-MOT). Marcadores sin equivalente (AreaEffectCloud, Fireworks) retornan -1.
      */
     public static int mapEntityTypeOutbound(int entityType, LegacyProtocol dst) {
         if (!dst.needsTranslation()) {
             return entityType;
         }
 
-        // Entidades modernas (1.2+ / 1.13+ / 1.16+) -> downgrade a equivalentes clasicos
-        int mapped = switch (entityType) {
-            case 110 -> 32;  // Drowned -> Zombie
-            case 114 -> 34;  // Pillager -> Skeleton
-            case 115 -> 15;  // VillagerV2 -> Villager
-            case 116 -> 44;  // ZombieVillagerV2 -> ZombieVillager
-            case 118 -> 15;  // WanderingTrader -> Villager
-            case 123, 127 -> 36; // Piglin / Brute -> ZombiePigman
-            case 124 -> 12;  // Hoglin -> Pig
-            case 126 -> 36;  // Zoglin -> ZombiePigman
-            case 144 -> 34;  // Bogged -> Skeleton
-            case 30, 31, 58, 59, 73, 74, 75, 108, 109, 111, 112, 113, 121, 122, 125, 128, 129, 130, 131,
-                    132, 133, 134, 138, 139, 140, 141, 142, 143, 146, 147, 148, 218 -> -1;
-            default -> entityType;
-        };
-        if (mapped < 0) {
-            return -1;
-        }
+        int mapped = entityType;
 
+        // 1) Entidades de 1.1.0 -> reemplazo equivalente para < 110 (0.15 - 1.0.x)
         if (dst.isBefore110()) {
-            // 1.1.0: Llama (29), Vindicator (57), Evoker (104), Vex (105), LlamaSpit (102), EvocationFangs (103), Fireworks (72)
             mapped = switch (mapped) {
                 case 29 -> 24;   // Llama -> Donkey
                 case 57 -> 45;   // Vindicator -> Witch
-                case 72, 102, 103, 104, 105 -> -1;
+                case 104 -> 45;  // Evoker -> Witch
+                case 105 -> 19;  // Vex -> Bat
+                case 102 -> 81;  // LlamaSpit -> Snowball
+                case 72, 103 -> -1; // Fireworks / EvocationFangs (sin entidad base segura en < 110)
                 default -> mapped;
             };
             if (mapped < 0) {
@@ -430,13 +410,21 @@ public final class LegacyContentMapper {
             }
         }
 
+        // 3) Entidades de 1.0.x -> reemplazo equivalente para < 92 (0.15 - 0.16)
         if (dst.isBefore92()) {
-            // 1.0.x: PolarBear (28), EnderDragon (53), Shulker (54), Endermite (55), EndCrystal (71),
-            // ShulkerBullet (76), EnderEye (70), EnderPearl (87), BlueWitherSkull (91), CommandMinecart (100), LingeringPotion (101)
             mapped = switch (mapped) {
+                case 28 -> 14;   // PolarBear -> Wolf
+                case 53 -> 41;   // EnderDragon -> Ghast
+                case 54 -> 43;   // Shulker -> Blaze
                 case 55 -> 39;   // Endermite -> Silverfish
+                case 70 -> 81;   // EnderEye -> Snowball
+                case 76 -> 94;   // ShulkerBullet -> SmallFireBall
+                case 79 -> 85;   // DragonFireball -> Fireball
+                case 87 -> 81;   // EnderPearl -> Snowball
+                case 91 -> 89;   // WitherSkullDangerous -> WitherSkull
+                case 100 -> 84;  // CommandMinecart -> MinecartEmpty
                 case 101 -> 86;  // LingeringPotion -> ThrownPotion
-                case 28, 53, 54, 70, 71, 76, 79, 87, 91, 100 -> -1;
+                case 71 -> -1;   // EndCrystal
                 default -> mapped;
             };
             if (mapped < 0) {
@@ -444,11 +432,14 @@ public final class LegacyContentMapper {
             }
         }
 
+        // 4) Entidades de 0.16.x -> reemplazo equivalente para < 90 (0.15.x)
         if (dst.isBefore90()) {
-            // 0.16.x: Guardian (49), ElderGuardian (50), NPC (51), Wither (52), AreaEffectCloud (95)
-            // Ademas ArmorStand (61) es 1.2+
             mapped = switch (mapped) {
-                case 49, 50, 51, 52, 61, 95, 99 -> -1;
+                case 49 -> 17;   // Guardian -> Squid
+                case 50 -> 17;   // ElderGuardian -> Squid
+                case 51 -> 15;   // NPC -> Villager
+                case 52 -> 48;   // Wither -> WitherSkeleton
+                case 95, 99 -> -1; // AreaEffectCloud / Chalkboard
                 default -> mapped;
             };
             if (mapped < 0) {
@@ -456,7 +447,7 @@ public final class LegacyContentMapper {
             }
         }
 
-        // Verificacion estricta de IDs validos <= 1.1
+        // Verificacion estricta de IDs validos conocidos en <= 1.1
         return switch (mapped) {
             case 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
                     32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 57,
@@ -466,30 +457,68 @@ public final class LegacyContentMapper {
         };
     }
 
+    /**
+     * Mapea nombres de atributos de v113 a nombres legados de MCPE 0.15.x (< 90).
+     * Retorna null si el atributo no existe en el cliente destino.
+     */
+    public static String mapAttributeNameOutbound(String v113Name, LegacyProtocol dst) {
+        if (v113Name == null || v113Name.isEmpty()) {
+            return null;
+        }
+        if (!dst.isBefore90()) {
+            return v113Name;
+        }
+        return switch (v113Name) {
+            case "minecraft:health", "generic.health" -> "generic.health";
+            case "minecraft:absorption", "generic.absorption" -> "generic.absorption";
+            case "minecraft:player.hunger", "player.hunger" -> "player.hunger";
+            case "minecraft:player.saturation", "player.saturation" -> "player.saturation";
+            case "minecraft:player.exhaustion", "player.exhaustion" -> "player.exhaustion";
+            case "minecraft:player.level", "player.level" -> "player.level";
+            case "minecraft:player.experience", "player.experience" -> "player.experience";
+            case "minecraft:movement", "generic.movementSpeed" -> "generic.movementSpeed";
+            case "minecraft:knockback_resistance", "generic.knockbackResistance" -> "generic.knockbackResistance";
+            case "minecraft:follow_range", "generic.followRange" -> "generic.followRange";
+            case "minecraft:attack_damage", "generic.attackDamage" -> "generic.attackDamage";
+            case "minecraft:horse.jump_strength", "horse.jumpStrength" -> "horse.jumpStrength";
+            case "minecraft:zombie.spawn_reinforcements", "zombie.spawnReinforcements" -> "zombie.spawnReinforcements";
+            default -> null;
+        };
+    }
+
     // =========================================================================
     // 4. Metadatos de Entidades (v113 -> 0.15.x y v113 -> 0.16..1.0.9)
     // =========================================================================
 
-    /**
-     * Traduce EntityMetadata desde formato v113 al formato exacto del cliente {@code dst}.
-     */
     public static byte[] translateMetadataOutbound(LegacyStream in, LegacyProtocol dst) {
+        return translateMetadataOutbound(in, dst, null);
+    }
+
+    /**
+     * Traduce EntityMetadata desde formato v113 al formato exacto del cliente {@code dst},
+     * filtrando propiedades especificas de entidades reemplazadas.
+     */
+    public static byte[] translateMetadataOutbound(LegacyStream in, LegacyProtocol dst, EntitySpawnInfo spawnInfo) {
         if (dst.isBefore90()) {
-            return translateMetadataToPre90(in, dst);
+            return translateMetadataToPre90(in, dst, spawnInfo);
         }
-        return translateMetadataTo90Through112(in, dst);
+        return translateMetadataTo90Through112(in, dst, spawnInfo);
     }
 
     /**
      * Convierte metadata v113 (VarInt key/type) al mapa de 0.15.x (ActorMetadataList::PROTOCOL_81):
      * keys 0,1,2,3,4,7,8,14,15,16,17,18,19,20,21,23,24 + terminador 0x7F.
+     * En Nukkit-MOT V1_1_0: DATA_ENTITY_AGE=24, DATA_PLAYER_FLAGS=26, DATA_PLAYER_BED_POSITION=28,
+     * DATA_LEAD_HOLDER_EID=38 (Binary.writeMetadata +1 para keys >= 29).
      */
-    private static byte[] translateMetadataToPre90(LegacyStream in, LegacyProtocol dst) {
+    private static byte[] translateMetadataToPre90(LegacyStream in, LegacyProtocol dst, EntitySpawnInfo spawnInfo) {
         LegacyStream out = LegacyStream.writer(96);
         int count = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
         boolean wroteShowNametag = false;
         boolean wroteSilent = false;
         boolean wroteNoAi = false;
+        boolean replaced = spawnInfo != null && spawnInfo.isReplaced();
+        int mappedType = spawnInfo != null ? spawnInfo.mappedType() : -1;
 
         for (int i = 0; i < count && in.remaining() > 0; i++) {
             int key = in.readUnsignedVarInt();
@@ -498,8 +527,12 @@ public final class LegacyContentMapper {
             // DATA_FLAGS (key 0, long en v113 -> byte en 0.15.x con solo bits 0..5 + extrae flags booleanos)
             if (key == 0 && type == DATA_TYPE_LONG) {
                 long flags = in.readVarLong();
+                long safeLow = flags & 0x3FL;
+                if (replaced) {
+                    safeLow &= ~((1L << 4) | (1L << 2)); // limpiar flags de estado especifico (saddled/riding/tamed etc.) salvo onFire/sneaking
+                }
                 out.writeByte((DATA_TYPE_BYTE << 5) | 0);
-                out.writeByte((int) (flags & 0x3F));
+                out.writeByte((int) safeLow);
 
                 boolean alwaysShowName = (flags & (1L << 15)) != 0 || (flags & (1L << 14)) != 0;
                 if (!wroteShowNametag) {
@@ -517,7 +550,7 @@ public final class LegacyContentMapper {
                     out.writeByte((DATA_TYPE_BYTE << 5) | 15); // DATA_NO_AI
                     out.writeByte((flags & (1L << 16)) != 0 ? 1 : 0);
                 }
-                if ((flags & (1L << 7)) != 0) { // DATA_FLAG_INLOVE
+                if (!replaced && (flags & (1L << 7)) != 0) { // DATA_FLAG_INLOVE
                     out.writeByte((DATA_TYPE_BYTE << 5) | 21); // DATA_IN_LOVE
                     out.writeByte(1);
                 }
@@ -549,17 +582,17 @@ public final class LegacyContentMapper {
                     out.writeByte((DATA_TYPE_BYTE << 5) | 8);
                     out.writeByte(amb);
                 }
-                case 25 -> { // DATA_ENTITY_AGE (v113 key 25 int/byte -> 0.15 key 14 byte)
+                case 24 -> { // DATA_ENTITY_AGE (v113 wire key 24 -> 0.15 key 14 byte)
                     int age = readMetaAsInt(in, type);
                     out.writeByte((DATA_TYPE_BYTE << 5) | 14);
                     out.writeByte(age != 0 ? 1 : 0);
                 }
-                case 27 -> { // DATA_PLAYER_FLAGS (v113 key 27 byte -> 0.15 key 16 byte)
+                case 26 -> { // DATA_PLAYER_FLAGS (v113 wire key 26 -> 0.15 key 16 byte)
                     int pf = readMetaAsInt(in, type);
                     out.writeByte((DATA_TYPE_BYTE << 5) | 16);
                     out.writeByte(pf);
                 }
-                case 29 -> { // DATA_PLAYER_BED_POSITION (v113 key 29 pos -> 0.15 key 17 pos)
+                case 28 -> { // DATA_PLAYER_BED_POSITION (v113 wire key 28 -> 0.15 key 17 pos)
                     if (type == DATA_TYPE_POS) {
                         int[] bp = in.readSignedBlockPosition(LegacyProtocol.PROTOCOL_113);
                         out.writeByte((DATA_TYPE_POS << 5) | 17);
@@ -572,20 +605,26 @@ public final class LegacyContentMapper {
                 }
                 case 2 -> { // DATA_VARIANT (v113 key 2 int -> 0.15 key 18 int)
                     int var = readMetaAsInt(in, type);
-                    out.writeByte((DATA_TYPE_INT << 5) | 18);
-                    out.writeIntLE(var);
+                    if (!replaced) {
+                        out.writeByte((DATA_TYPE_INT << 5) | 18);
+                        out.writeIntLE(var);
+                    }
                 }
-                case 19 -> { // DATA_SWELL (v113 key 19 int/byte -> 0.15 key 19 byte)
+                case 19 -> { // DATA_SWELL (v113 key 19 -> 0.15 key 19 byte, solo Creeper 33)
                     int swell = readMetaAsInt(in, type);
-                    out.writeByte((DATA_TYPE_BYTE << 5) | 19);
-                    out.writeByte(swell);
+                    if (!replaced || mappedType == 33) {
+                        out.writeByte((DATA_TYPE_BYTE << 5) | 19);
+                        out.writeByte(swell);
+                    }
                 }
-                case 3 -> { // DATA_COLOUR (v113 key 3 byte -> 0.15 key 20 DATA_BOAT_COLOR byte)
+                case 3 -> { // DATA_COLOUR (v113 key 3 byte -> 0.15 key 20 byte)
                     int col = readMetaAsInt(in, type);
-                    out.writeByte((DATA_TYPE_BYTE << 5) | 20);
-                    out.writeByte(col & 0x0F);
+                    if (!replaced || mappedType == 13 || mappedType == 14 || mappedType == 90) {
+                        out.writeByte((DATA_TYPE_BYTE << 5) | 20);
+                        out.writeByte(col & 0x0F);
+                    }
                 }
-                case 38 -> { // DATA_LEAD_HOLDER_EID (v113 key 38 long -> 0.15 key 23 long)
+                case 38 -> { // DATA_LEAD_HOLDER_EID (v113 wire key 38 long -> 0.15 key 23 long)
                     long holder = (type == DATA_TYPE_LONG) ? in.readVarLong() : readMetaAsInt(in, type);
                     out.writeByte((DATA_TYPE_LONG << 5) | 23);
                     out.writeLongLE(holder);
@@ -601,12 +640,14 @@ public final class LegacyContentMapper {
      * Traduce metadata v113 para clientes 90..112:
      * - En < 110 corrige desplazamiento de bits 19..41 en DATA_FLAGS (+3 bits en 110+)
      * - Remapea keys 40..44 segun ActorMetadataList PROTOCOL_90 vs PROTOCOL_110
-     * - Filtra VECTOR3F y keys desconocidas por la familia del cliente
+     * - Filtra VECTOR3F y keys especificas de entidades reemplazadas
      */
-    private static byte[] translateMetadataTo90Through112(LegacyStream in, LegacyProtocol dst) {
+    private static byte[] translateMetadataTo90Through112(LegacyStream in, LegacyProtocol dst, EntitySpawnInfo spawnInfo) {
         int count = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
         LegacyStream entries = LegacyStream.writer(96);
         int writtenCount = 0;
+        boolean replaced = spawnInfo != null && spawnInfo.isReplaced();
+        int mappedType = spawnInfo != null ? spawnInfo.mappedType() : -1;
 
         for (int i = 0; i < count && in.remaining() > 0; i++) {
             int key = in.readUnsignedVarInt();
@@ -631,6 +672,16 @@ public final class LegacyContentMapper {
                 entries.writeUnsignedVarInt(DATA_TYPE_LONG);
                 entries.writeVarLong(flags);
                 continue;
+            }
+
+            // Filtrar metadatos exclusivos de entidad cuando el mob fue reemplazado
+            if (replaced && (key == 2 || key == 3 || key == 19 || key == 20 || key == 21
+                    || key == 22 || key == 35 || key == 36 || key == 37 || key == 40
+                    || (key >= 46 && key <= 60))) {
+                if (!(key == 3 && mappedType == 13)) {
+                    skipMetaValue(in, type);
+                    continue;
+                }
             }
 
             // Remapeo de keys entre v113 y 90..109
@@ -903,7 +954,7 @@ public final class LegacyContentMapper {
     /**
      * Traduce y sanitiza LevelEventPacket (0x1a -> 0x16 en < 90):
      * - Ajusta bloques en EVENT_PARTICLE_DESTROY (2001) y EVENT_PARTICLE_PUNCH_BLOCK (2014)
-     * - Filtra IDs de particulas y eventos no soportados por la version del cliente
+     * - Remapea IDs de particulas de Nukkit-MOT V1_1_0 (0x4000 | pid) a IDs legados de 0.15/1.0
      */
     public static PacketTranslator.OutboundResult translateLevelEventOutbound(byte[] v113Payload, LegacyProtocol dst) {
         LegacyStream in = LegacyStream.reader(v113Payload);
@@ -911,18 +962,14 @@ public final class LegacyContentMapper {
         float[] pos = in.readVector3(LegacyProtocol.PROTOCOL_113);
         int data = in.readVarInt();
 
-        // Validar rango de particulas (0x4000 | particleId)
+        // Remapear y validar rango de particulas (0x4000 | particleId)
         if ((evid & EVENT_ADD_PARTICLE_MASK) != 0) {
-            int pid = evid & ~EVENT_ADD_PARTICLE_MASK;
-            if (dst.isBefore90() && pid > 38) {
+            int rawPid = evid & ~EVENT_ADD_PARTICLE_MASK;
+            int mappedPid = mapV113ParticleId(rawPid, dst);
+            if (mappedPid < 0) {
                 return PacketTranslator.OutboundResult.drop(false);
             }
-            if (dst.isBefore110() && pid > 45) {
-                return PacketTranslator.OutboundResult.drop(false);
-            }
-            if (pid > 47) {
-                return PacketTranslator.OutboundResult.drop(false);
-            }
+            evid = EVENT_ADD_PARTICLE_MASK | mappedPid;
         } else if (dst.isBefore90()) {
             // 0.15.x soporta sonidos 1000..1044, particulas 2000..2015, clima 3001..3004 y eventos 3500..3508
             if ((evid >= 1050 && evid < 2000) || (evid >= 2016 && evid < 3000) || evid > 3508) {
@@ -963,10 +1010,62 @@ public final class LegacyContentMapper {
         return PacketTranslator.OutboundResult.forward(out.toByteArray());
     }
 
-    /**
-     * Filtra y traduce EntityEventPacket (0x1c -> 0x18) evitando IDs de eventos desconocidos en 0.15.x.
-     */
+    private static int mapV113ParticleId(int pid, LegacyProtocol dst) {
+        if (!dst.isBefore110()) {
+            return pid <= 47 ? pid : -1;
+        }
+        if (pid <= 0) {
+            return -1;
+        }
+        if (pid == 1 || pid == 2) {
+            return 1; // BUBBLE / BUBBLE_MANUAL -> BUBBLE (1)
+        }
+        if (pid >= 3 && pid <= 21) {
+            return pid - 1; // 2..20 (CRITICAL..PORTAL)
+        }
+        if (pid == 22) {
+            return 20; // PORTAL / EYE_DESPAWN
+        }
+        if (pid == 23 || pid == 24) {
+            return 21; // SPLASH
+        }
+        if (pid >= 25 && pid <= 27) {
+            return pid - 3; // 22..24 (WATER_WAKE, DRIP_WATER, DRIP_LAVA)
+        }
+        if (pid == 28) {
+            return 24; // DRIP_HONEY -> DRIP_LAVA
+        }
+        if (pid == 29) {
+            return dst.isBefore90() ? 19 : 25; // FALLING_DUST -> BLOCK_FORCE_FIELD (19) en 0.15 o 25 en 0.16..1.0
+        }
+        if (pid >= 30 && pid <= 42) {
+            return pid - 4; // 26..38 (MOB_SPELL..CARROT)
+        }
+        if (dst.isBefore90()) {
+            return -1; // > 38 no existen en 0.15.x
+        }
+        if (pid == 43) {
+            return 38; // SPIT fallback
+        }
+        if (pid >= 44 && pid <= 45) {
+            return pid - 5; // 39..40 (END_ROD / DRAGON_BREATH)
+        }
+        return -1;
+    }
+
     public static PacketTranslator.OutboundResult translateEntityEventOutbound(byte[] v113Payload, LegacyProtocol dst) {
+        return translateEntityEventOutbound(v113Payload, dst, null);
+    }
+
+    /**
+     * Filtra y traduce EntityEventPacket (0x1c -> 0x18) evitando IDs de eventos desconocidos en 0.15.x
+     * y eventos incompatibles con entidades reemplazadas.
+     */
+    public static PacketTranslator.OutboundResult translateEntityEventOutbound(
+            byte[] v113Payload,
+            LegacyProtocol dst,
+            EntitySpawnInfo spawnInfo
+    ) {
         LegacyStream in = LegacyStream.reader(v113Payload);
         long eid = in.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113);
         int event = in.readByte();
@@ -978,6 +1077,17 @@ public final class LegacyContentMapper {
             }
         } else if (dst.isBefore110() && event > 64) {
             return PacketTranslator.OutboundResult.drop(false);
+        }
+
+        if (spawnInfo != null && spawnInfo.isReplaced()) {
+            // Para entidades reemplazadas solo permitir eventos universales seguros (hurt/death/arm/love/etc.)
+            boolean allowedForReplaced = switch (event) {
+                case 1, 2, 3, 4, 5, 18, 19, 20, 21, 57 -> event != 57 || spawnInfo.mappedType() == 13;
+                default -> false;
+            };
+            if (!allowedForReplaced) {
+                return PacketTranslator.OutboundResult.drop(false);
+            }
         }
 
         int legacyId = PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.ENTITY_EVENT_PACKET & 0xFF);
