@@ -223,6 +223,38 @@ public final class LegacyContentMapper {
             }
         }
 
+        // Clamping de variantes post-1.1 (1.9/1.10/1.14) presentes en bloques de Nukkit-MOT V1_1_0
+        switch (id) {
+            case 19 -> {
+                if (dst.isBefore110() && m > 0) {
+                    m = 0; // Wet Sponge (19:1) se anadio en 1.1.0
+                }
+            }
+            case 24, 155, 179 -> {
+                if (m > 2) {
+                    m = 0; // Smooth variants (meta 3) son 1.10+
+                }
+            }
+            case 38 -> {
+                if (m > 8) {
+                    m = 0; // Cornflower / Lily of the Valley son 1.14+
+                }
+            }
+            case 139 -> {
+                if (m > 1) {
+                    m = 0; // Solo cobblestone/mossy wall existen en <= 1.1
+                }
+            }
+            case 182 -> {
+                int maxSlab = dst.isBefore92() ? 0 : 1;
+                if (m > maxSlab) {
+                    m = 0; // Purpur slab en 1.0+, variantes 2..7 son 1.9+
+                }
+            }
+            default -> {
+            }
+        }
+
         return (id << 8) | (m & 0x0F);
     }
 
@@ -251,49 +283,56 @@ public final class LegacyContentMapper {
         String[] canPlace = dst.isBefore110() ? new String[0] : slot.canPlaceOn();
         String[] canDestroy = dst.isBefore110() ? new String[0] : slot.canDestroy();
 
-        // Bloque como item (1..255)
+        // Bloque como item (1..255): sin traductor a items parecidos (creativo -> null, normal -> AIR)
         if (id >= 1 && id <= 255) {
-            if (creativeMode && !isCreativeBlockSupported(id, meta, dst)) {
-                return null;
+            if (creativeMode) {
+                if (!isCreativeBlockSupported(id, meta, dst)) {
+                    return null;
+                }
+            } else if (!isBlockSupportedAsItem(id, meta, dst)) {
+                return LegacyStream.LegacySlot.AIR;
             }
-            int packed = mapBlockAndMeta(id, Math.max(0, meta), dst);
-            int mappedId = (packed >>> 8) & 0xFF;
-            int mappedMeta = meta < 0 ? meta : (packed & 0x0F);
-            if (mappedId == 0) {
-                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
-            }
+            int safeMeta = meta < 0 ? meta : (meta & 0x0F);
             byte[] safeNbt = sanitizeItemNbtForSlot(nbt, dst);
-            return new LegacyStream.LegacySlot(mappedId, mappedMeta, count, safeNbt, canPlace, canDestroy);
+            return new LegacyStream.LegacySlot(id, safeMeta, count, safeNbt, canPlace, canDestroy);
         }
 
-        // Items > 1.1 (ej. discos 500+, items modernos > 463) -> no existen en <= 1.1
-        if (id > 509 || (id >= 464 && id <= 499) || id >= 500) {
+        // Items > 1.1 (464, 465, 467..499, discos 500+; 466 = appleEnchanted valido en <= 1.1)
+        if (id == 464 || id == 465 || id >= 467) {
             return creativeMode ? null : LegacyStream.LegacySlot.AIR;
         }
 
-        // Fireworks (401), Firework Star (402), Armor Stand (425), Banner (446), Banner Pattern (434), Respawn/Chem (442..456)
-        if (id == 401 || id == 402 || id == 425 || id == 434 || id == 442 || (id >= 446 && id <= 449) || id == 451 || (id >= 453 && id <= 456)) {
+        // Book & Quill (386), Fireworks (401), Firework Star (402), Armor Stand (425), Banner Pattern (434),
+        // Banner (446), Respawn/Chem/Edu (442, 447..449, 451, 453..456)
+        if (id == 386 || id == 401 || id == 402 || id == 425 || id == 434 || id == 442
+                || (id >= 446 && id <= 449) || id == 451 || (id >= 453 && id <= 456)) {
             return creativeMode ? null : LegacyStream.LegacySlot.AIR;
         }
 
         if (dst.isBefore110()) {
             // Camas de colores 355:1..15 se introdujeron en 1.1.0 (antes solo 355:0)
             if (id == 355 && meta != 0) {
-                if (creativeMode) {
-                    return null;
-                }
-                meta = 0;
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
-            // Items exclusivos de 1.1.0: Totem (450), Shulker Shell (445), Iron Nugget (452)
-            if (id == 450 || id == 445 || id == 452) {
+            // Explorer Map (395:2) se introdujo en 1.1.0
+            if (id == 395 && meta != 0) {
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
+            }
+            // Items exclusivos de 1.1.0: Totem (450), Iron Nugget (452)
+            if (id == 450 || id == 452) {
                 return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
         }
 
         if (dst.isBefore92()) {
             // Items exclusivos de 1.0.x+: Ender Pearl (368), Eye of Ender (381), End Crystal (426),
-            // Chorus (432,433), Dragon Breath (437), Lingering Potion (441), Command Minecart (443), Elytra (444)
-            if (id == 368 || id == 381 || id == 426 || id == 432 || id == 433 || id == 437 || id == 441 || id == 443 || id == 444) {
+            // Chorus (432,433), Dragon Breath (437), Lingering Potion (441), Command Minecart (443), Elytra (444), Shulker Shell (445)
+            if (id == 368 || id == 381 || id == 426 || id == 432 || id == 433 || id == 437
+                    || id == 441 || id == 443 || id == 444 || id == 445) {
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
+            }
+            // Dragon Head (397:5) se introdujo en 1.0.0
+            if (id == 397 && meta > 4) {
                 return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
         }
@@ -313,30 +352,80 @@ public final class LegacyContentMapper {
             }
         }
 
-        // Potions / Splash Potions (373, 438): limitar variantes de pocion en < 110
-        if ((id == 373 || id == 438) && dst.isBefore92() && meta > 36) {
-            if (creativeMode) {
-                return null;
-            }
-            meta = 0;
+        // Cubos (325): solo vacio(0), leche(1), agua(8), lava(10); peces 2..5 son 1.4+
+        if (id == 325 && meta >= 0 && meta != 0 && meta != 1 && meta != 8 && meta != 10) {
+            return creativeMode ? null : LegacyStream.LegacySlot.AIR;
         }
 
-        // Tipped Arrows (262:1..37): en < 92 solo flecha normal (262:0)
-        if (id == 262 && meta > 0 && dst.isBefore92()) {
-            if (creativeMode) {
-                return null;
+        // Tintes (351): solo 0..15 en <= 1.1 (16..19 son 1.14+)
+        if (id == 351 && meta > 15) {
+            return creativeMode ? null : LegacyStream.LegacySlot.AIR;
+        }
+
+        // Cabezas (397): max Dragon Head (5) en <= 1.1
+        if (id == 397 && meta > 5) {
+            return creativeMode ? null : LegacyStream.LegacySlot.AIR;
+        }
+
+        // Pociones / Splash / Lingering (373, 438, 441): max 36 en <= 1.1 (37..42 son 1.2+/Turtle/SlowFalling)
+        if ((id == 373 || id == 438 || id == 441) && meta > 36) {
+            return creativeMode ? null : LegacyStream.LegacySlot.AIR;
+        }
+
+        // Tipped Arrows (262): en < 90 solo 0; en 90..112 solo 0 y 6..37
+        if (id == 262 && meta > 0) {
+            if (dst.isBefore90() || meta < 6 || meta > 37) {
+                return creativeMode ? null : LegacyStream.LegacySlot.AIR;
             }
-            meta = 0;
         }
 
         byte[] safeNbt = sanitizeItemNbtForSlot(nbt, dst);
-        if (id == 403 && dst.isBefore90() && (safeNbt == null || safeNbt.length == 0)) {
-            if (creativeMode) {
-                return null; // libro encantado cuyo encantamiento no existe en 0.15
-            }
+        if (id == 403 && creativeMode && nbt != null && nbt.length > 0 && (safeNbt == null || safeNbt.length == 0)) {
+            return null; // libro encantado cuyo encantamiento no existe en la version destino
         }
 
         return new LegacyStream.LegacySlot(id, meta, count, safeNbt, canPlace, canDestroy);
+    }
+
+    private static boolean isBlockSupportedAsItem(int blockId, int meta, LegacyProtocol dst) {
+        if (blockId <= 0 || blockId > 255 || blockId == 255 || blockId == 250 || blockId == 248 || blockId == 249) {
+            return false;
+        }
+        if (blockId == 84 || blockId == 160 || blockId == 166 || blockId == 176 || blockId == 177
+                || blockId == 190 || blockId == 191 || blockId == 192 || blockId == 202 || blockId == 204
+                || blockId == 238 || blockId == 239 || blockId == 241 || blockId == 242
+                || blockId == 253 || blockId == 254) {
+            return false;
+        }
+        if (dst.isBefore110() && (blockId == 205 || blockId == 207 || (blockId >= 218 && blockId <= 237))) {
+            return false;
+        }
+        if (dst.isBefore92() && (blockId == 119 || blockId == 120 || blockId == 121 || blockId == 122
+                || blockId == 130 || blockId == 137 || blockId == 188 || blockId == 189
+                || (blockId >= 200 && blockId <= 217) || blockId == 240 || blockId == 252)) {
+            return false;
+        }
+        if (dst.isBefore90() && (blockId == 138 || blockId == 168 || blockId == 169 || blockId == 246 || blockId == 247)) {
+            return false;
+        }
+        if (meta >= 0) {
+            if ((blockId == 24 || blockId == 155 || blockId == 179) && meta > 2) {
+                return false;
+            }
+            if (blockId == 38 && meta > 8) {
+                return false;
+            }
+            if (blockId == 139 && meta > 1) {
+                return false;
+            }
+            if (blockId == 182 && meta > (dst.isBefore92() ? 0 : 1)) {
+                return false;
+            }
+            if (dst.isBefore110() && blockId == 19 && meta > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isCreativeBlockSupported(int blockId, int meta, LegacyProtocol dst) {
@@ -348,8 +437,20 @@ public final class LegacyContentMapper {
                 || blockId == 242 || blockId == 253 || blockId == 254 || blockId > 255) {
             return false;
         }
+        if ((blockId == 24 || blockId == 155 || blockId == 179) && meta > 2) {
+            return false;
+        }
+        if (blockId == 38 && meta > 8) {
+            return false;
+        }
+        if (blockId == 139 && meta > 1) {
+            return false;
+        }
+        if (blockId == 182 && meta > (dst.isBefore92() ? 0 : 1)) {
+            return false;
+        }
         if (dst.isBefore110()) {
-            if (blockId == 205 || blockId == 207 || (blockId >= 218 && blockId <= 237)) {
+            if (blockId == 205 || blockId == 207 || (blockId >= 218 && blockId <= 237) || (blockId == 19 && meta > 0)) {
                 return false;
             }
         }
@@ -361,7 +462,7 @@ public final class LegacyContentMapper {
             }
         }
         if (dst.isBefore90()) {
-            if (blockId == 138 || blockId == 168 || blockId == 169 || blockId == 247 || (blockId == 19 && meta > 0)) {
+            if (blockId == 138 || blockId == 168 || blockId == 169 || blockId == 247) {
                 return false;
             }
         }
@@ -372,7 +473,7 @@ public final class LegacyContentMapper {
         if (nbt == null || nbt.length == 0) {
             return new byte[0];
         }
-        if (dst.isBefore110()) {
+        if (dst.needsTranslation()) {
             return LegacyNbtConverter.sanitizeItemNbt(nbt, dst);
         }
         return nbt;
@@ -661,11 +762,19 @@ public final class LegacyContentMapper {
             if (key == 0 && type == DATA_TYPE_LONG) {
                 long flags = in.readVarLong();
                 if (dst.isBefore110()) {
-                    // En < 110: bits 0..18 iguales; 19..21 (CAN_CLIMB/SWIMMER/CAN_FLY) no existian,
-                    // y bits 23..41 (RESTING..IDLING) estaban en 19..36!
-                    long low = flags & 0x7FFFFL; // bits 0..18
-                    long shifted = ((flags >>> 23) & 0x3FFFFL) << 19; // bits 23..40 -> 19..36
-                    flags = low | shifted;
+                    // ActorMetadataList::PROTOCOL_90: 0..18 iguales, 23..28 -> 19..24, 30..41 -> 25..36
+                    long low = flags & 0x7FFFFL;
+                    long mid = ((flags >>> 23) & 0x3FL) << 19;
+                    long high = ((flags >>> 30) & 0xFFFL) << 25;
+                    flags = low | mid | high;
+                } else {
+                    // ActorMetadataList::PROTOCOL_110: omite WALKER(22), ORPHANED(29), CAN_DASH(46) y HAS_COLLISION(48+)
+                    long low = flags & 0x3FFFFFL;
+                    long mid = ((flags >>> 23) & 0x3FL) << 22;
+                    long high = ((flags >>> 30) & 0x3FFFL) << 28;
+                    long mount = ((flags >>> 44) & 0x3L) << 43;
+                    long linger = ((flags >>> 47) & 0x1L) << 45;
+                    flags = low | mid | high | mount | linger;
                 }
                 writtenCount++;
                 entries.writeUnsignedVarInt(0);
@@ -684,7 +793,7 @@ public final class LegacyContentMapper {
                 }
             }
 
-            // Remapeo de keys entre v113 y 90..109
+            // Remapeo de keys entre v113 y 90..112
             int mappedKey = key;
             if (dst.isBefore110()) {
                 if (key == 41 || key == 42 || key == 43 || key == 44) {
@@ -695,6 +804,9 @@ public final class LegacyContentMapper {
                     skipMetaValue(in, type);
                     continue;
                 }
+            } else if (key > 77) {
+                skipMetaValue(in, type);
+                continue;
             }
 
             // Remapear bloque display de minecart (key 16 en INT cuando > 0)

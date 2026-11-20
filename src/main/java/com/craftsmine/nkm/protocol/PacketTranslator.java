@@ -297,6 +297,7 @@ public final class PacketTranslator {
             case 0x3f -> translatePlayerListOutbound(payload, target, registry);
             case 0x42 -> translateSpawnExperienceOrbOutbound(payload, target);
             case 0x46 -> translateChunkRadiusUpdatedOutbound(payload, target);
+            case 0x49 -> translateGameRulesChangedOutbound(payload, target);
             default -> payload;
         };
 
@@ -618,6 +619,19 @@ public final class PacketTranslator {
         LegacyStream out = LegacyStream.writer(16);
         int flags = src.isBefore90() ? in.readIntBE() : in.readUnsignedVarInt();
         int cmdPerm = src.isBefore90() ? in.readIntBE() : in.readUnsignedVarInt();
+        if (src.isBefore90() && (flags & 0x1C0) != 0) {
+            int mapped = flags & 0x03;
+            if ((flags & 0x40) != 0) {
+                mapped |= 0x20; // PRE_V_0_15_0_AUTO_JUMP -> AUTO_JUMP
+            }
+            if ((flags & 0x80) != 0) {
+                mapped |= 0x40; // PRE_V_0_15_0_ALLOW_FLIGHT -> ALLOW_FLIGHT
+            }
+            if ((flags & 0x100) != 0) {
+                mapped |= 0x80; // PRE_V_0_15_0_NO_CLIP -> NO_CLIP
+            }
+            flags = mapped;
+        }
         out.writeUnsignedVarInt(flags);
         out.writeUnsignedVarInt(cmdPerm);
         return out.toByteArray();
@@ -797,34 +811,18 @@ public final class PacketTranslator {
         boolean commandsEnabled = in.readBoolean();
         boolean textureRequired = in.readBoolean();
         int ruleCount = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
-        byte[] rulesRaw = null;
-        if (ruleCount > 0) {
-            int start = in.position();
-            for (int i = 0; i < ruleCount && in.remaining() > 0; i++) {
-                in.readString(LegacyProtocol.PROTOCOL_113);
-                int rType = in.readUnsignedVarInt();
-                switch (rType) {
-                    case 1 -> in.readBoolean();
-                    case 2 -> in.readUnsignedVarInt();
-                    case 3 -> in.readFloatLE();
-                    default -> {
-                    }
-                }
-            }
-            int end = in.position();
-            in.position(start);
-            rulesRaw = in.readBytes(end - start);
-        }
+        byte[] rulesFiltered = ruleCount > 0 ? filterEncodedGameRules(in, ruleCount, dst) : new byte[]{0};
         String levelId = in.remaining() > 0 ? in.readString(LegacyProtocol.PROTOCOL_113) : "";
         String worldName = in.remaining() > 0 ? in.readString(LegacyProtocol.PROTOCOL_113) : "World";
         String premiumTemplate = in.remaining() > 0 ? in.readString(LegacyProtocol.PROTOCOL_113) : "";
         boolean isTrial = in.remaining() > 0 && in.readBoolean();
         long currentTick = in.remaining() >= 8 ? in.readLongLE() : 0L;
+        int safeDim = clampDimension(dimension, dst);
 
         LegacyStream out = LegacyStream.writer(256);
         if (dst.isBefore90()) {
             out.writeIntBE(seed);
-            out.writeByte(dimension);
+            out.writeByte(safeDim);
             out.writeIntBE(generator);
             out.writeIntBE(worldGamemode);
             out.writeEntityRuntimeId(dst, entityRuntimeId);
@@ -848,7 +846,7 @@ public final class PacketTranslator {
         out.writeFloatLE(pitch);
         out.writeFloatLE(yaw);
         out.writeVarInt(seed);
-        out.writeVarInt(dimension);
+        out.writeVarInt(safeDim);
         out.writeVarInt(generator);
         out.writeVarInt(worldGamemode);
         out.writeVarInt(difficulty);
@@ -861,10 +859,7 @@ public final class PacketTranslator {
         out.writeBoolean(commandsEnabled);
         out.writeBoolean(textureRequired);
         if (!dst.isBefore110()) {
-            out.writeUnsignedVarInt(ruleCount);
-            if (rulesRaw != null) {
-                out.writeBytes(rulesRaw);
-            }
+            out.writeBytes(rulesFiltered);
         }
         out.writeString(dst, levelId);
         out.writeString(dst, worldName);
@@ -1081,8 +1076,14 @@ public final class PacketTranslator {
         int mode = in.readByte();
         boolean onGround = in.readBoolean();
         long ridingEid = in.remaining() > 0 ? in.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113) : 0L;
+        int teleportCause = 0;
+        int teleportItem = 0;
+        if (mode == 2 && in.remaining() >= 8) {
+            teleportCause = in.readIntLE();
+            teleportItem = in.readIntLE();
+        }
 
-        LegacyStream out = LegacyStream.writer(48);
+        LegacyStream out = LegacyStream.writer(56);
         out.writeEntityRuntimeId(dst, eid);
         out.writeVector3(dst, pos[0], pos[1], pos[2]);
         if (dst.isBefore90()) {
@@ -1098,6 +1099,10 @@ public final class PacketTranslator {
         out.writeBoolean(onGround);
         if (!dst.isBefore110()) {
             out.writeEntityRuntimeId(dst, ridingEid);
+            if (mode == 2) {
+                out.writeIntLE(teleportCause);
+                out.writeIntLE(teleportItem);
+            }
         }
         return out.toByteArray();
     }
@@ -1736,10 +1741,28 @@ public final class PacketTranslator {
         LegacyStream in = LegacyStream.reader(payload);
         int flags = in.readUnsignedVarInt();
         int cmdPerm = in.readUnsignedVarInt();
+        // MySoft AdventureSettingsPacket (< 90):
+        // WORLD_IMMUTABLE=0x01, NO_PVP=0x02, PRE_V_0_15_0_AUTO_JUMP=0x40, PRE_V_0_15_0_ALLOW_FLIGHT=0x80, PRE_V_0_15_0_NO_CLIP=0x100
+        int mappedFlags = 0;
+        if ((flags & 0x01) != 0) {
+            mappedFlags |= 0x01;
+        }
+        if ((flags & 0x02) != 0) {
+            mappedFlags |= 0x02;
+        }
+        if ((flags & 0x20) != 0) {
+            mappedFlags |= 0x40;
+        }
+        if ((flags & 0x40) != 0) {
+            mappedFlags |= 0x80;
+        }
+        if ((flags & 0x80) != 0) {
+            mappedFlags |= 0x100;
+        }
         LegacyStream out = LegacyStream.writer(12);
-        out.writeIntBE(flags);
-        out.writeIntBE(cmdPerm);
-        out.writeIntBE(1); // playerPermission MEMBER
+        out.writeIntBE(mappedFlags);
+        out.writeIntBE(Math.min(2, cmdPerm));
+        out.writeIntBE(2); // PERMISSION_HOST
         return out.toByteArray();
     }
 
@@ -1774,16 +1797,100 @@ public final class PacketTranslator {
     }
 
     private static byte[] translateChangeDimensionOutbound(byte[] payload, LegacyProtocol dst) {
-        if (!dst.isBefore90()) {
-            return payload;
+        LegacyStream in = LegacyStream.reader(payload);
+        int dimension = in.readVarInt();
+        float[] pos = in.readVector3(LegacyProtocol.PROTOCOL_113);
+        boolean respawn = in.remaining() > 0 && in.readBoolean();
+        int safeDim = clampDimension(dimension, dst);
+
+        LegacyStream out = LegacyStream.writer(20);
+        if (dst.isBefore90()) {
+            // MySoft ChangeDimensionPacket (< 90): byte(dimension) + boolean(respawn), SIN Vector3
+            out.writeByte(safeDim);
+            out.writeBoolean(respawn);
+            return out.toByteArray();
+        }
+        out.writeVarInt(safeDim);
+        out.writeVector3(dst, pos[0], pos[1], pos[2]);
+        out.writeBoolean(respawn);
+        return out.toByteArray();
+    }
+
+    private static int clampDimension(int dimension, LegacyProtocol dst) {
+        if (dst.getProtocol() < 100) {
+            return dimension & 0x01; // MySoft getClientFriendlyDimension (< 100): solo Overworld (0) y Nether (1)
+        }
+        return (dimension < 0 || dimension > 2) ? 0 : dimension;
+    }
+
+    private static byte[] translateGameRulesChangedOutbound(byte[] payload, LegacyProtocol dst) {
+        if (dst.isBefore90()) {
+            return new byte[0];
         }
         LegacyStream in = LegacyStream.reader(payload);
-        LegacyStream out = LegacyStream.writer(16);
-        out.writeByte(in.readVarInt());
-        float[] pos = in.readVector3(LegacyProtocol.PROTOCOL_113);
-        out.writeVector3(dst, pos[0], pos[1], pos[2]);
-        out.writeBoolean(in.remaining() > 0 && in.readBoolean());
+        int count = in.remaining() > 0 ? in.readUnsignedVarInt() : 0;
+        return filterEncodedGameRules(in, count, dst);
+    }
+
+    private static byte[] filterEncodedGameRules(LegacyStream in, int count, LegacyProtocol dst) {
+        LegacyStream entries = LegacyStream.writer(128);
+        int kept = 0;
+        for (int i = 0; i < count && in.remaining() > 0; i++) {
+            String name = in.readString(LegacyProtocol.PROTOCOL_113);
+            int type = in.readUnsignedVarInt();
+            boolean supported = isGameRuleSupported(name, dst);
+            switch (type) {
+                case 1 -> {
+                    boolean val = in.readBoolean();
+                    if (supported) {
+                        kept++;
+                        entries.writeString(dst, name);
+                        entries.writeUnsignedVarInt(1);
+                        entries.writeBoolean(val);
+                    }
+                }
+                case 2 -> {
+                    int val = in.readUnsignedVarInt();
+                    if (supported) {
+                        kept++;
+                        entries.writeString(dst, name);
+                        entries.writeUnsignedVarInt(2);
+                        entries.writeUnsignedVarInt(val);
+                    }
+                }
+                case 3 -> {
+                    float val = in.readFloatLE();
+                    if (supported) {
+                        kept++;
+                        entries.writeString(dst, name);
+                        entries.writeUnsignedVarInt(3);
+                        entries.writeFloatLE(val);
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        LegacyStream out = LegacyStream.writer(entries.toByteArray().length + 4);
+        out.writeUnsignedVarInt(kept);
+        out.writeBytes(entries.toByteArray());
         return out.toByteArray();
+    }
+
+    private static boolean isGameRuleSupported(String name, LegacyProtocol dst) {
+        if (name == null || name.isEmpty() || dst.isBefore90()) {
+            return false;
+        }
+        String key = name.toLowerCase(Locale.ROOT);
+        return switch (key) {
+            case "dodaylightcycle", "doentitydrops", "dofiretick", "domobloot", "domobspawning",
+                    "dotiledrops", "doweathercycle", "drowningdamage", "falldamage", "firedamage",
+                    "keepinventory", "mobgriefing", "naturalregeneration", "pvp",
+                    "showdeathmessages", "tntexplodes" -> true;
+            case "commandblockoutput", "sendcommandfeedback" -> dst.getProtocol() >= 105;
+            case "maxcommandchainlength", "randomtickspeed" -> !dst.isBefore110();
+            default -> false;
+        };
     }
 
     private static byte[] translateSetPlayerGameTypeOutbound(byte[] payload, LegacyProtocol dst) {

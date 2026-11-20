@@ -2,6 +2,7 @@ package com.craftsmine.nkm;
 
 import cn.nukkit.GameVersion;
 import cn.nukkit.entity.data.Skin;
+import cn.nukkit.item.Item;
 import cn.nukkit.nbt.NBTIO;
 import cn.nukkit.nbt.tag.CompoundTag;
 import cn.nukkit.nbt.tag.ListTag;
@@ -1053,6 +1054,253 @@ class ProtocolBridgeTest {
         byte[] outSkin = plr.readBytes(plr.readShortBE());
         assertEquals(Skin.DOUBLE_SKIN_SIZE, outSkin.length);
         assertEquals((byte) 0x42, outSkin[0]);
+    }
+
+    @Test
+    void sanitizesAllRealV110CreativeItemsEnforcesItemAirRuleAndPatchesGamemodeMetadata() throws IOException {
+        try {
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            java.lang.reflect.Field fUnsafe = unsafeClass.getDeclaredField("theUnsafe");
+            fUnsafe.setAccessible(true);
+            Object unsafe = fUnsafe.get(null);
+            java.lang.reflect.Method allocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
+            java.lang.reflect.Field fInst = cn.nukkit.Server.class.getDeclaredField("instance");
+            fInst.setAccessible(true);
+            Object previousServer = fInst.get(null);
+            if (previousServer == null) {
+                fInst.set(null, allocateInstance.invoke(unsafe, cn.nukkit.Server.class));
+            }
+            try {
+                cn.nukkit.item.RuntimeItems.init();
+                cn.nukkit.block.Block.init();
+                cn.nukkit.item.enchantment.Enchantment.init();
+                cn.nukkit.level.GlobalBlockPalette.init();
+                cn.nukkit.item.Item.init();
+                if (Item.getCreativeItems(GameVersion.V1_1_0).isEmpty()) {
+                    Item.initCreativeItems();
+                }
+            } finally {
+                fInst.set(null, previousServer);
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        List<Item> v110Creative = Item.getCreativeItems(GameVersion.V1_1_0);
+        assertTrue(v110Creative.size() > 900);
+
+        LegacyStream creativePkt = LegacyStream.writer(v110Creative.size() * 24 + 32);
+        creativePkt.writeByte(ProtocolInfo_v113.CONTAINER_SET_CONTENT_PACKET & 0xFF);
+        creativePkt.writeUnsignedVarInt(0x79);
+        creativePkt.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 1L);
+        creativePkt.writeUnsignedVarInt(v110Creative.size());
+        for (Item item : v110Creative) {
+            byte[] nbt = new byte[0];
+            if (item.hasCompoundTag()) {
+                nbt = NBTIO.write(item.getNamedTag(), ByteOrder.LITTLE_ENDIAN, false);
+            }
+            creativePkt.writeSlot(
+                    LegacyProtocol.PROTOCOL_113,
+                    new LegacyStream.LegacySlot(item.getId(), item.getDamage(), item.getCount(), nbt, new String[0], new String[0])
+            );
+        }
+        creativePkt.writeUnsignedVarInt(0);
+        byte[] rawV113Creative = creativePkt.toByteArray();
+
+        for (LegacyProtocol proto : List.of(
+                LegacyProtocol.PROTOCOL_84,
+                LegacyProtocol.PROTOCOL_91,
+                LegacyProtocol.PROTOCOL_105,
+                LegacyProtocol.PROTOCOL_110
+        )) {
+            PacketTranslator.OutboundResult res = PacketTranslator.translateOutbound(rawV113Creative, proto, true);
+            assertFalse(res.suppress());
+            LegacyStream r = LegacyStream.reader(res.legacyPacket());
+            int expectedPid = PacketIdMapper.toLegacy(proto, ProtocolInfo_v113.CONTAINER_SET_CONTENT_PACKET & 0xFF);
+            assertEquals(expectedPid, r.readByte());
+            assertEquals(0x79, proto.isBefore110() ? r.readByte() : r.readUnsignedVarInt());
+            if (!proto.isBefore110()) {
+                assertEquals(1L, r.readEntityUniqueId(proto));
+            }
+            int outCount = proto.isBefore90() ? r.readShortBE() : r.readUnsignedVarInt();
+            assertTrue(outCount > 250 && outCount < v110Creative.size(), "proto=" + proto + " count=" + outCount);
+
+            int maxEnch = proto.isBefore110() ? 24 : 26;
+            for (int i = 0; i < outCount; i++) {
+                LegacyStream.LegacySlot slot = r.readSlot(proto);
+                assertTrue(slot.id() > 0, "Creative slot must never be AIR on proto=" + proto);
+                assertNotEquals(386, slot.id(), "Book & Quill does not exist <= 1.1");
+                assertNotEquals(401, slot.id(), "Fireworks do not exist <= 1.1");
+                assertNotEquals(402, slot.id(), "Firework Star does not exist <= 1.1");
+                assertTrue(slot.id() <= 466 && slot.id() != 464 && slot.id() != 465, "Invalid item id=" + slot.id());
+                if (slot.id() == 325) {
+                    assertTrue(slot.meta() == 0 || slot.meta() == 1 || slot.meta() == 8 || slot.meta() == 10);
+                }
+                if (slot.id() == 351) {
+                    assertTrue(slot.meta() <= 15);
+                }
+                if (slot.id() == 139) {
+                    assertTrue(slot.meta() <= 1);
+                }
+                if (slot.id() == 182) {
+                    assertTrue(slot.meta() <= (proto.isBefore92() ? 0 : 1));
+                }
+                if (slot.id() == 373 || slot.id() == 438 || slot.id() == 441) {
+                    assertTrue(slot.meta() <= 36);
+                }
+                if (slot.id() == 262 && slot.meta() > 0) {
+                    assertFalse(proto.isBefore90());
+                    assertTrue(slot.meta() >= 6 && slot.meta() <= 37);
+                }
+                if (slot.id() == 403) {
+                    assertTrue(slot.nbt().length > 0, "Empty enchanted book leaked on proto=" + proto);
+                    CompoundTag tag = (CompoundTag) NBTIO.readTag(new ByteArrayInputStream(slot.nbt()), ByteOrder.LITTLE_ENDIAN, false);
+                    ListTag<CompoundTag> ench = tag.getList("ench", CompoundTag.class);
+                    assertTrue(ench.size() > 0);
+                    for (int j = 0; j < ench.size(); j++) {
+                        int eid = ench.get(j).getShort("id");
+                        assertTrue(eid >= 0 && eid <= maxEnch, "Unsupported enchant id=" + eid + " for proto=" + proto);
+                    }
+                }
+            }
+            assertEquals(0, proto.isBefore90() ? r.readShortBE() : r.readUnsignedVarInt());
+            assertEquals(0, r.remaining(), "Trailing unparsed bytes on creative packet proto=" + proto);
+        }
+
+        // Regla de items no-creativos: sin reemplazo a items parecidos -> AIR (0)
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(218, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_105, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(166, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_110, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(169, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_84, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(355, 14, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_105, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(386, 0, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_110, false).id());
+        assertEquals(0, LegacyContentMapper.mapSlotOutbound(new LegacyStream.LegacySlot(325, 2, 1, new byte[0], new String[0], new String[0]), LegacyProtocol.PROTOCOL_110, false).id());
+
+        // SetEntityData DATA_FLAG_HAS_COLLISION (bit 48) + bit shifts en 110 y 105
+        LegacyStream metaV113 = LegacyStream.writer(32);
+        metaV113.writeByte(ProtocolInfo_v113.SET_ENTITY_DATA_PACKET & 0xFF);
+        metaV113.writeEntityUniqueId(LegacyProtocol.PROTOCOL_113, 1L);
+        metaV113.writeUnsignedVarInt(1);
+        metaV113.writeUnsignedVarInt(0); // key DATA_FLAGS
+        metaV113.writeUnsignedVarInt(LegacyContentMapper.DATA_TYPE_LONG);
+        // bits: CAN_FLY(21) | WALKER(22) | TAMED(28) | LEASHED(30) | HAS_COLLISION(48)
+        long v113Flags = (1L << 21) | (1L << 22) | (1L << 28) | (1L << 30) | (1L << 48);
+        metaV113.writeVarLong(v113Flags);
+
+        PacketTranslator.OutboundResult meta110 = PacketTranslator.translateOutbound(metaV113.toByteArray(), LegacyProtocol.PROTOCOL_110, false);
+        LegacyStream mr110 = LegacyStream.reader(meta110.legacyPacket());
+        assertEquals(0x27, mr110.readByte());
+        assertEquals(1L, mr110.readEntityRuntimeId(LegacyProtocol.PROTOCOL_110));
+        assertEquals(1, mr110.readUnsignedVarInt());
+        assertEquals(0, mr110.readUnsignedVarInt());
+        assertEquals(LegacyContentMapper.DATA_TYPE_LONG, mr110.readUnsignedVarInt());
+        long expected110 = (1L << 21) | (1L << 27) | (1L << 28); // sin WALKER(22) ni HAS_COLLISION(48)
+        assertEquals(expected110, mr110.readVarLong());
+
+        PacketTranslator.OutboundResult meta105 = PacketTranslator.translateOutbound(metaV113.toByteArray(), LegacyProtocol.PROTOCOL_105, false);
+        LegacyStream mr105 = LegacyStream.reader(meta105.legacyPacket());
+        mr105.readByte();
+        mr105.readEntityRuntimeId(LegacyProtocol.PROTOCOL_105);
+        mr105.readUnsignedVarInt();
+        mr105.readUnsignedVarInt();
+        mr105.readUnsignedVarInt();
+        long expected105 = (1L << 24) | (1L << 25); // TAMED(28)->24, LEASHED(30)->25
+        assertEquals(expected105, mr105.readVarLong());
+
+        // AdventureSettings 0.15.x outbound flags (AUTO_JUMP 0x20->0x40, ALLOW_FLIGHT 0x40->0x80, WORLD_BUILDER/FLYING filtrados)
+        LegacyStream advV113 = LegacyStream.writer(16);
+        advV113.writeByte(ProtocolInfo_v113.ADVENTURE_SETTINGS_PACKET & 0xFF);
+        advV113.writeUnsignedVarInt(0x20 | 0x40 | 0x100 | 0x200);
+        advV113.writeUnsignedVarInt(1);
+        LegacyStream ar = LegacyStream.reader(PacketTranslator.translateOutbound(advV113.toByteArray(), LegacyProtocol.PROTOCOL_84, true).legacyPacket());
+        assertEquals(0x31, ar.readByte());
+        assertEquals(0x40 | 0x80, ar.readIntBE());
+        assertEquals(1, ar.readIntBE());
+        assertEquals(2, ar.readIntBE());
+    }
+
+    @Test
+    void handlesDimensionTeleportPacketsAcrossAllLegacyProtocols() throws IOException {
+        // 1) ChangeDimensionPacket: 0.15.x (< 90) omite Vector3 y clampea End (2 -> 0); 0.16 (91) clampea 2 -> 0; 1.0+ conserva 2
+        LegacyStream chDimV113 = LegacyStream.writer(32);
+        chDimV113.writeByte(ProtocolInfo_v113.CHANGE_DIMENSION_PACKET & 0xFF);
+        chDimV113.writeVarInt(2); // The End
+        chDimV113.writeVector3(LegacyProtocol.PROTOCOL_113, 100f, 64f, 100f);
+        chDimV113.writeBoolean(false);
+
+        PacketTranslator.OutboundResult dim84 = PacketTranslator.translateOutbound(chDimV113.toByteArray(), LegacyProtocol.PROTOCOL_84, true);
+        LegacyStream dr84 = LegacyStream.reader(dim84.legacyPacket());
+        assertEquals(0x36, dr84.readByte());
+        assertEquals(0, dr84.readByte()); // End clamped a Overworld (0)
+        assertFalse(dr84.readBoolean());
+        assertEquals(0, dr84.remaining(), "0.15 ChangeDimension must NOT contain Vector3");
+
+        PacketTranslator.OutboundResult dim91 = PacketTranslator.translateOutbound(chDimV113.toByteArray(), LegacyProtocol.PROTOCOL_91, false);
+        LegacyStream dr91 = LegacyStream.reader(dim91.legacyPacket());
+        assertEquals(0x3c, dr91.readByte());
+        assertEquals(0, dr91.readVarInt()); // End clamped a Overworld en < 100
+
+        PacketTranslator.OutboundResult dim110 = PacketTranslator.translateOutbound(chDimV113.toByteArray(), LegacyProtocol.PROTOCOL_110, false);
+        LegacyStream dr110 = LegacyStream.reader(dim110.legacyPacket());
+        assertEquals(0x3d, dr110.readByte());
+        assertEquals(2, dr110.readVarInt());
+        dr110.readVector3(LegacyProtocol.PROTOCOL_110);
+        assertFalse(dr110.readBoolean());
+
+        // 2) MovePlayerPacket MODE_TELEPORT (2) para 1.1.0 (110) conserva teleportCause y teleportItem (8 bytes)
+        LegacyStream tpV113 = LegacyStream.writer(64);
+        tpV113.writeByte(ProtocolInfo_v113.MOVE_PLAYER_PACKET & 0xFF);
+        tpV113.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, 7L);
+        tpV113.writeVector3(LegacyProtocol.PROTOCOL_113, 10f, 70f, -20f);
+        tpV113.writeFloatLE(0f);
+        tpV113.writeFloatLE(180f);
+        tpV113.writeFloatLE(180f);
+        tpV113.writeByte(MovePlayerPacket.MODE_TELEPORT);
+        tpV113.writeBoolean(true);
+        tpV113.writeEntityRuntimeId(LegacyProtocol.PROTOCOL_113, 0L);
+        tpV113.writeIntLE(3); // teleportCause
+        tpV113.writeIntLE(368); // teleportItem
+
+        PacketTranslator.OutboundResult tp110 = PacketTranslator.translateOutbound(tpV113.toByteArray(), LegacyProtocol.PROTOCOL_110, false);
+        MovePlayerPacket decodedTp = new MovePlayerPacket();
+        decodedTp.protocol = 113;
+        decodedTp.gameVersion = GameVersion.byProtocol(113, false);
+        decodedTp.setBuffer(tp110.legacyPacket(), 1);
+        decodedTp.decode();
+        assertEquals(MovePlayerPacket.MODE_TELEPORT, decodedTp.mode);
+        assertEquals(3, decodedTp.teleportCause);
+        assertEquals(368, decodedTp.teleportItem);
+
+        // 3) GameRulesChangedPacket (0x49) filtra showCoordinates y maxCommandChainLength segun version
+        LegacyStream grV113 = LegacyStream.writer(128);
+        grV113.writeByte(ProtocolInfo_v113.GAME_RULES_CHANGED_PACKET & 0xFF);
+        grV113.writeUnsignedVarInt(3);
+        grV113.writeString(LegacyProtocol.PROTOCOL_113, "pvp");
+        grV113.writeUnsignedVarInt(1);
+        grV113.writeBoolean(true);
+        grV113.writeString(LegacyProtocol.PROTOCOL_113, "showCoordinates");
+        grV113.writeUnsignedVarInt(1);
+        grV113.writeBoolean(true);
+        grV113.writeString(LegacyProtocol.PROTOCOL_113, "maxCommandChainLength");
+        grV113.writeUnsignedVarInt(2);
+        grV113.writeUnsignedVarInt(65536);
+
+        assertTrue(PacketTranslator.translateOutbound(grV113.toByteArray(), LegacyProtocol.PROTOCOL_84, true).suppress());
+
+        PacketTranslator.OutboundResult gr91 = PacketTranslator.translateOutbound(grV113.toByteArray(), LegacyProtocol.PROTOCOL_91, false);
+        LegacyStream grr91 = LegacyStream.reader(gr91.legacyPacket());
+        assertEquals(0x47, grr91.readByte());
+        assertEquals(1, grr91.readUnsignedVarInt());
+        assertEquals("pvp", grr91.readString(LegacyProtocol.PROTOCOL_91));
+
+        PacketTranslator.OutboundResult gr110 = PacketTranslator.translateOutbound(grV113.toByteArray(), LegacyProtocol.PROTOCOL_110, false);
+        LegacyStream grr110 = LegacyStream.reader(gr110.legacyPacket());
+        assertEquals(0x49, grr110.readByte());
+        assertEquals(2, grr110.readUnsignedVarInt()); // pvp + maxCommandChainLength (sin showCoordinates)
+
+        // 4) BlockEntity EnderChest filtrado en 0.16 (91) pero permitido en 1.0 (105)
+        CompoundTag enderTile = new CompoundTag().putString("id", "EnderChest").putInt("x", 0).putInt("y", 64).putInt("z", 0);
+        byte[] enderNet = NBTIO.write(enderTile, ByteOrder.LITTLE_ENDIAN, true);
+        assertNull(LegacyNbtConverter.convertSingleBlockEntity(enderNet, LegacyProtocol.PROTOCOL_91));
+        assertNotNull(LegacyNbtConverter.convertSingleBlockEntity(enderNet, LegacyProtocol.PROTOCOL_105));
     }
 
     private record DummyChannelId(String id) implements ChannelId {
