@@ -205,8 +205,14 @@ public final class PacketTranslator {
             case 0x0d -> {
                 return translateAddEntityOutbound(payload, target, state);
             }
+            case 0x0e -> {
+                return translateRemoveEntityOutbound(payload, target, state);
+            }
             case 0x0f -> {
                 return translateAddItemEntityOutbound(payload, target);
+            }
+            case 0x11 -> {
+                return translateTakeItemEntityOutbound(payload, target);
             }
             case 0x19 -> {
                 return LegacyContentMapper.translateLevelSoundEventOutbound(payload, target);
@@ -262,8 +268,8 @@ public final class PacketTranslator {
             case 0x0a -> translateSetTimeOutbound(payload, target);
             case 0x0b -> translateStartGameOutbound(payload, target, state);
             case 0x0c -> translateAddPlayerOutbound(payload, target);
-            case 0x0e -> translateRemoveEntityOutbound(payload, target, state);
-            case 0x11 -> translateTakeItemEntityOutbound(payload, target);
+            // 0x0e (RemoveEntity) y 0x11 (TakeItemEntity) se manejan en el switch superior
+            // con traduccion completa (pid + payload) via OutboundResult
             case 0x12 -> translateMoveEntityOutbound(payload, target);
             case 0x13 -> translateMovePlayerOutbound(payload, target);
             case 0x16 -> translateUpdateBlockOutbound(payload, target);
@@ -985,15 +991,37 @@ public final class PacketTranslator {
         return OutboundResult.forward(out.toByteArray());
     }
 
-    private static byte[] translateRemoveEntityOutbound(byte[] payload, LegacyProtocol dst, LegacySessionState state) {
+    private static OutboundResult translateRemoveEntityOutbound(byte[] payload, LegacyProtocol dst, LegacySessionState state) {
+        // MySoft PacketPool no define tabla para el protocolo 90: getPacketIdByMagic() resuelve
+        // hacia abajo hasta PacketsIds81 (REMOVE_ACTOR_PACKET = 0x0c) aunque la serializacion de
+        // campos ya es varlong (umbral >= 90). Usar la tabla 91 (0x0f) hace que el cliente 0.15.90
+        // lea un MoveActorAbsolute y la entidad nunca desaparezca.
+        int legacyId = dst.getProtocol() == 90
+                ? 0x0c
+                : PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.REMOVE_ENTITY_PACKET & 0xFF);
+        if (legacyId == PacketIdMapper.UNMAPPED) {
+            return OutboundResult.drop(false);
+        }
         LegacyStream in = LegacyStream.reader(payload);
-        long eid = in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
+        // Nukkit-MOT v113 (protocol < 137) escribe TODOS los entity ids como UnsignedVarInt
+        // (override DataPacket.putEntityUniqueId/putEntityRuntimeId -> putUnsignedVarInt), no como
+        // VarLong zigzag. La lectura debe seguir la misma convencion que usan los Add* hacia cada
+        // familia para que el cliente vea el MISMO id en el spawn y en el remove:
+        // - dst < 90: los Add* exponen el VALOR real del id (longBE del runtimeId leido como
+        //   unsigned); leer el uniqueId como VarLong zigzag corrompe el valor (p.ej. eid 77 -> -39)
+        //   y la entidad jamas desaparece en clientes 0.15.x (80-84).
+        // - dst >= 90: los Add* preservan los bytes originales del campo uniqueId mediante la
+        //   involucion del zigzag (varlong(zigzagdec(x)) == x); hay que preservar esos mismos bytes.
+        long eid = dst.isBefore90()
+                ? in.readUnsignedVarLong()
+                : in.readEntityUniqueId(LegacyProtocol.PROTOCOL_113);
         if (state != null) {
             state.removeEntity(eid);
         }
         LegacyStream out = LegacyStream.writer(12);
+        out.writeByte(legacyId & 0xFF);
         out.writeEntityUniqueId(dst, eid);
-        return out.toByteArray();
+        return OutboundResult.forward(out.toByteArray());
     }
 
     private static OutboundResult translateAddItemEntityOutbound(byte[] payload, LegacyProtocol dst) {
@@ -1023,14 +1051,25 @@ public final class PacketTranslator {
         return OutboundResult.forward(out.toByteArray());
     }
 
-    private static byte[] translateTakeItemEntityOutbound(byte[] payload, LegacyProtocol dst) {
+    private static OutboundResult translateTakeItemEntityOutbound(byte[] payload, LegacyProtocol dst) {
+        // MySoft PacketPool no define tabla para el protocolo 90: getPacketIdByMagic() resuelve
+        // hacia abajo hasta PacketsIds81 (TAKE_ITEM_ACTOR_PACKET = 0x0e) aunque la serializacion de
+        // campos ya es UnsignedVarLong (umbral >= 90). Usar la tabla 91 (0x12) hace que el cliente
+        // 0.15.90 lea un RemoveBlock y el item recogido nunca desaparezca del suelo.
+        int legacyId = dst.getProtocol() == 90
+                ? 0x0e
+                : PacketIdMapper.toLegacy(dst, ProtocolInfo_v113.TAKE_ITEM_ENTITY_PACKET & 0xFF);
+        if (legacyId == PacketIdMapper.UNMAPPED) {
+            return OutboundResult.drop(false);
+        }
         LegacyStream in = LegacyStream.reader(payload);
         long target = in.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113);
         long eid = in.readEntityRuntimeId(LegacyProtocol.PROTOCOL_113);
         LegacyStream out = LegacyStream.writer(16);
+        out.writeByte(legacyId & 0xFF);
         out.writeEntityRuntimeId(dst, target);
         out.writeEntityRuntimeId(dst, eid);
-        return out.toByteArray();
+        return OutboundResult.forward(out.toByteArray());
     }
 
     private static byte[] translateMoveEntityOutbound(byte[] payload, LegacyProtocol dst) {
